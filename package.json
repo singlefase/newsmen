@@ -1,0 +1,37 @@
+{
+  "name": "news-generation-backend",
+  "version": "1.0.0",
+  "description": "Standalone news generation API with RSS feed support for WordPress aggregator plugins",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "test": "node scripts/testnews.js"
+  },
+  "keywords": [
+    "news",
+    "rss",
+    "api",
+    "aggregator",
+    "wordpress"
+  ],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "@google/genai": "^1.33.0",
+    "axios": "^1.13.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "html-entities": "^2.6.0",
+    "mongodb": "^6.13.0",
+    "rss-parser": "^3.13.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

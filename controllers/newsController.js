@@ -893,6 +893,23 @@ function formatRFC822Date(date) {
   return `${day}, ${dayNum} ${month} ${year} ${hours}:${minutes}:${seconds} +0000`;
 }
 
+// Helper function to get base URL with proper protocol (HTTPS when secure)
+function getBaseUrl(req) {
+  // Check if request is secure (HTTPS) or behind a proxy
+  const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : req.protocol;
+  return `${protocol}://${req.get('host')}`;
+}
+
+// Helper function to check if a string is a valid URL
+function isValidUrl(string) {
+  try {
+    const url = new URL(string);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch (_) {
+    return false;
+  }
+}
+
 // Generate RSS feed in standard RSS 2.0 format (from database)
 exports.generateRSSFeed = async (req, res) => {
   try {
@@ -930,7 +947,7 @@ exports.generateRSSFeed = async (req, res) => {
         
         if (feed && feed.items && feed.items.length > 0) {
           const items = feed.items.slice(0, parseInt(limit));
-          const baseUrl = `${req.protocol}://${req.get('host')}`;
+          const baseUrl = getBaseUrl(req);
           const rssUrl = `${baseUrl}${req.originalUrl}`;
           
           const channelTitle = feed.title || 'News Feed';
@@ -959,7 +976,15 @@ exports.generateRSSFeed = async (req, res) => {
           for (const item of items) {
             const title = (item.title || '').trim();
             const link = item.link || '';
-            const guid = item.guid || item.link || `${baseUrl}/news/${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            // GUID must be a full URL when isPermaLink="true"
+            // Always use link as guid (it's always a URL from Google News RSS)
+            // If link is missing, generate a valid URL
+            let guid = link;
+            if (!guid || !isValidUrl(guid)) {
+              guid = `${baseUrl}/news/${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            }
+            const isGuidUrl = isValidUrl(guid);
+            
             let description = item.contentSnippet || item.content || item.description || '';
             
             if (description.includes('<')) {
@@ -991,7 +1016,7 @@ exports.generateRSSFeed = async (req, res) => {
 <![CDATA[ ${title} ]]>
 </title>
 <link>${escapeXml(link)}</link>
-<guid isPermaLink="true">${escapeXml(guid)}</guid>
+<guid isPermaLink="${isGuidUrl ? 'true' : 'false'}">${escapeXml(guid)}</guid>
 <atom:link href="${escapeXml(link)}"/>
 <description>
 <![CDATA[ ${description} ]]>
@@ -1018,7 +1043,7 @@ exports.generateRSSFeed = async (req, res) => {
       }
       
       // Return empty but valid RSS feed if both database and RSS fail
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const baseUrl = getBaseUrl(req);
       const rssUrl = `${baseUrl}${req.originalUrl}`;
       
       return res.set('Content-Type', 'application/rss+xml; charset=utf-8').send(`<?xml version="1.0" encoding="UTF-8"?>
@@ -1037,7 +1062,7 @@ exports.generateRSSFeed = async (req, res) => {
 </rss>`);
     }
 
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const baseUrl = getBaseUrl(req);
     const rssUrl = `${baseUrl}${req.originalUrl}`;
     
     // Channel metadata
@@ -1069,7 +1094,13 @@ exports.generateRSSFeed = async (req, res) => {
     for (const item of newsItems) {
       const title = (item.title || '').trim();
       const link = item.link || `${baseUrl}/news/${item._id}`;
-      const guid = item.link || `${baseUrl}/news/${item._id}`;
+      // GUID must be a full URL when isPermaLink="true"
+      // Ensure guid is always a valid URL
+      let guid = link;
+      if (!guid || !isValidUrl(guid)) {
+        guid = `${baseUrl}/news/${item._id}`;
+      }
+      const isGuidUrl = isValidUrl(guid);
       
       // Use rewritten content if available, otherwise original summary
       let description = item.rewrittenContent || item.originalSummary || item.description || '';
@@ -1100,7 +1131,7 @@ exports.generateRSSFeed = async (req, res) => {
 <![CDATA[ ${title} ]]>
 </title>
 <link>${escapeXml(link)}</link>
-<guid isPermaLink="true">${escapeXml(guid)}</guid>
+<guid isPermaLink="${isGuidUrl ? 'true' : 'false'}">${escapeXml(guid)}</guid>
 <atom:link href="${escapeXml(link)}"/>
 <description>
 <![CDATA[ ${description} ]]>

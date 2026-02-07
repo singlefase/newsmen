@@ -3,6 +3,7 @@ const cors = require("cors");
 const dotenv = require("dotenv");
 const { ErrorMiddleware } = require("./middleware/error");
 const newsRoutes = require("./routes/newsRoutes");
+const newsController = require("./controllers/newsController");
 
 // Load environment variables
 dotenv.config();
@@ -11,7 +12,7 @@ const app = express();
 const PORT = process.env.PORT || 8000;
 
 // CORS configuration
-const allowedOrigins = process.env.ALLOWED_ORIGINS 
+const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
   : ['*'];
 
@@ -49,6 +50,10 @@ app.get("/health", (req, res) => {
 // API Routes
 app.use("/news", newsRoutes);
 app.use("/api/news", newsRoutes); // Alternative API path
+
+// Custom RSS Routes (Top Level)
+app.get("/real/news/rss", newsController.getRealRSS);
+app.get("/rewrite/news/rss", newsController.getRewriteRSS);
 
 // Root endpoint
 app.get("/", (req, res) => {

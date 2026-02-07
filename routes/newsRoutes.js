@@ -18,6 +18,7 @@ newsRouter.get("/rss", generateRSSFeed);
 newsRouter.get("/rss.xml", generateRSSFeed);
 
 // API routes (must come before /:id to avoid route conflicts)
+newsRouter.get("/apidata", getAllNews); // Same logic as getAllNews but specific endpoint
 newsRouter.get("/api", getAllNews);
 newsRouter.get("/latest", getLatestNews);
 newsRouter.get("/search", searchNews);
@@ -28,13 +29,13 @@ newsRouter.get("/", (req, res) => {
   const hasJsonAccept = req.headers.accept && req.headers.accept.includes('application/json');
   const hasFormatJson = req.query.format === 'json';
   const hasPageParam = req.query.page !== undefined;
-  
+
   // If any of these conditions are true, it's an API request
   if (hasJsonAccept || hasFormatJson || hasPageParam) {
     console.log('[News Route] API request detected:', { hasJsonAccept, hasFormatJson, hasPageParam, query: req.query });
     return getAllNews(req, res);
   }
-  
+
   // Return API information
   return res.json({
     success: true,

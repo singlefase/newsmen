@@ -1174,66 +1174,66 @@ exports.generateRSSFeed = async (req, res) => {
 // /real/news/rss - Proxy Google News RSS as-is with strict validation format
 // Temporary file - will replace getRealRSS function
 exports.getRealRSS = async (req, res) => {
-    try {
-        const {
-            limit = 50,
-            source
-        } = req.query;
+  try {
+    const {
+      limit = 50,
+      source
+    } = req.query;
 
-        const RSS_SOURCES = [
-            { name: 'TV9 Marathi', url: 'https://www.tv9marathi.com/feed' },
-            { name: 'Zee News Marathi', url: 'https://zeenews.india.com/marathi/rss.xml' },
-            { name: 'Saam TV', url: 'https://www.saamtv.com/feed/' },
-            { name: 'Divya Marathi', url: 'https://divyamarathi.bhaskar.com/rss-v1--category-12019.xml' }
-        ];
+    const RSS_SOURCES = [
+      { name: 'TV9 Marathi', url: 'https://www.tv9marathi.com/feed' },
+      { name: 'Zee News Marathi', url: 'https://zeenews.india.com/marathi/rss.xml' },
+      { name: 'Saam TV', url: 'https://www.saamtv.com/feed/' },
+      { name: 'Divya Marathi', url: 'https://divyamarathi.bhaskar.com/rss-v1--category-12019.xml' }
+    ];
 
-        const sourcesToFetch = source
-            ? RSS_SOURCES.filter(s => s.name.toLowerCase().includes(source.toLowerCase()))
-            : RSS_SOURCES;
+    const sourcesToFetch = source
+      ? RSS_SOURCES.filter(s => s.name.toLowerCase().includes(source.toLowerCase()))
+      : RSS_SOURCES;
 
-        console.log(`[Real RSS] Fetching from ${sourcesToFetch.length} sources...`);
+    console.log(`[Real RSS] Fetching from ${sourcesToFetch.length} sources...`);
 
-        const feedPromises = sourcesToFetch.map(async (src) => {
-            try {
-                console.log(`[Real RSS] Fetching: ${src.name} - ${src.url}`);
-                const feed = await parser.parseURL(src.url);
-                return { source: src.name, feed, error: null };
-            } catch (error) {
-                console.error(`[Real RSS] Error fetching ${src.name}:`, error.message);
-                return { source: src.name, feed: null, error: error.message };
-            }
+    const feedPromises = sourcesToFetch.map(async (src) => {
+      try {
+        console.log(`[Real RSS] Fetching: ${src.name} - ${src.url}`);
+        const feed = await parser.parseURL(src.url);
+        return { source: src.name, feed, error: null };
+      } catch (error) {
+        console.error(`[Real RSS] Error fetching ${src.name}:`, error.message);
+        return { source: src.name, feed: null, error: error.message };
+      }
+    });
+
+    const results = await Promise.all(feedPromises);
+
+    let allItems = [];
+    results.forEach(result => {
+      if (result.feed && result.feed.items) {
+        result.feed.items.forEach(item => {
+          allItems.push({
+            ...item,
+            sourceName: result.source
+          });
         });
+      }
+    });
 
-        const results = await Promise.all(feedPromises);
+    allItems.sort((a, b) => {
+      const dateA = a.pubDate ? new Date(a.pubDate) : new Date(0);
+      const dateB = b.pubDate ? new Date(b.pubDate) : new Date(0);
+      return dateB - dateA;
+    });
 
-        let allItems = [];
-        results.forEach(result => {
-            if (result.feed && result.feed.items) {
-                result.feed.items.forEach(item => {
-                    allItems.push({
-                        ...item,
-                        sourceName: result.source
-                    });
-                });
-            }
-        });
+    allItems = allItems.slice(0, parseInt(limit));
 
-        allItems.sort((a, b) => {
-            const dateA = a.pubDate ? new Date(a.pubDate) : new Date(0);
-            const dateB = b.pubDate ? new Date(b.pubDate) : new Date(0);
-            return dateB - dateA;
-        });
+    const baseUrl = getBaseUrl(req);
+    const rssUrl = `${baseUrl}${req.originalUrl}`;
 
-        allItems = allItems.slice(0, parseInt(limit));
+    const channelTitle = 'Real Marathi News Feed';
+    const channelDescription = 'Direct feed from multiple Marathi news sources';
+    const channelLink = `${baseUrl}/real/news/rss`;
 
-        const baseUrl = getBaseUrl(req);
-        const rssUrl = `${baseUrl}${req.originalUrl}`;
-
-        const channelTitle = 'Real Marathi News Feed';
-        const channelDescription = 'Direct feed from multiple Marathi news sources';
-        const channelLink = `${baseUrl}/real/news/rss`;
-
-        let rssXml = `<?xml version="1.0" encoding="UTF-8"?>
+    let rssXml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss xmlns:media="http://search.yahoo.com/mrss/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
 <channel>
 <title><![CDATA[${channelTitle}]]></title>
@@ -1252,49 +1252,49 @@ exports.getRealRSS = async (req, res) => {
 </image>
 `;
 
-        for (const item of allItems) {
-            const title = (item.title || '').trim();
-            const link = item.link || '';
-            const guid = link;
-            const isGuidUrl = isValidUrl(guid);
+    for (const item of allItems) {
+      const title = (item.title || '').trim();
+      const link = item.link || '';
+      const guid = link;
+      const isGuidUrl = isValidUrl(guid);
 
-            let description = '';
-            if (item['content:encoded']) {
-                description = item['content:encoded'];
-            } else if (item.content) {
-                description = item.content;
-            } else if (item.contentSnippet) {
-                description = item.contentSnippet;
-            } else if (item.description) {
-                description = item.description;
-            }
+      let description = '';
+      if (item['content:encoded']) {
+        description = item['content:encoded'];
+      } else if (item.content) {
+        description = item.content;
+      } else if (item.contentSnippet) {
+        description = item.contentSnippet;
+      } else if (item.description) {
+        description = item.description;
+      }
 
-            if (description.includes('<') && !description.includes('<p>')) {
-                description = cleanDescription(description);
-            }
+      if (description.includes('<') && !description.includes('<p>')) {
+        description = cleanDescription(description);
+      }
 
-            const pubDate = item.pubDate ? formatRFC822Date(new Date(item.pubDate)) : formatRFC822Date(new Date());
+      const pubDate = item.pubDate ? formatRFC822Date(new Date(item.pubDate)) : formatRFC822Date(new Date());
 
-            let imageUrl = null;
-            if (item['content:encoded']) {
-                const imgMatch = item['content:encoded'].match(/<img[^>]+src=["']([^"']+)["']/i);
-                if (imgMatch && imgMatch[1]) imageUrl = imgMatch[1];
-            }
-            if (!imageUrl && item.content) {
-                const imgMatch = item.content.match(/<img[^>]+src=["']([^"']+)["']/i);
-                if (imgMatch && imgMatch[1]) imageUrl = imgMatch[1];
-            }
-            if (!imageUrl && item['media:content']) {
-                imageUrl = item['media:content']?.url || item['media:content']?.$?.url;
-            }
-            if (!imageUrl && item['media:thumbnail']) {
-                imageUrl = item['media:thumbnail']?.url || item['media:thumbnail']?.$?.url;
-            }
-            if (!imageUrl && item.enclosure) {
-                imageUrl = item.enclosure.url;
-            }
+      let imageUrl = null;
+      if (item['content:encoded']) {
+        const imgMatch = item['content:encoded'].match(/<img[^>]+src=["']([^"']+)["']/i);
+        if (imgMatch && imgMatch[1]) imageUrl = imgMatch[1];
+      }
+      if (!imageUrl && item.content) {
+        const imgMatch = item.content.match(/<img[^>]+src=["']([^"']+)["']/i);
+        if (imgMatch && imgMatch[1]) imageUrl = imgMatch[1];
+      }
+      if (!imageUrl && item['media:content']) {
+        imageUrl = item['media:content']?.url || item['media:content']?.$?.url;
+      }
+      if (!imageUrl && item['media:thumbnail']) {
+        imageUrl = item['media:thumbnail']?.url || item['media:thumbnail']?.$?.url;
+      }
+      if (!imageUrl && item.enclosure) {
+        imageUrl = item.enclosure.url;
+      }
 
-            rssXml += `<item>
+      rssXml += `<item>
 <title>
 <![CDATA[ ${title} ]]>
 </title>
@@ -1307,28 +1307,27 @@ exports.getRealRSS = async (req, res) => {
 <pubDate>${pubDate}</pubDate>
 `;
 
-            if (imageUrl) {
-                rssXml += `<media:content url="${escapeXml(imageUrl)}" type="image/jpeg" width="1000" height="1000"/>
+      if (imageUrl) {
+        rssXml += `<media:content url="${escapeXml(imageUrl)}" type="image/jpeg" width="1000" height="1000"/>
 `;
-            }
+      }
 
-            rssXml += `<source>${escapeXml(item.sourceName)}</source>
+
+
+      rssXml += `</item>
 `;
+    }
 
-            rssXml += `</item>
-`;
-        }
-
-        rssXml += `</channel>
+    rssXml += `</channel>
 </rss>`;
 
-        res.set('Content-Type', 'application/rss+xml; charset=utf-8');
-        res.send(rssXml);
+    res.set('Content-Type', 'application/rss+xml; charset=utf-8');
+    res.send(rssXml);
 
-    } catch (error) {
-        console.error("Error generating Real RSS:", error);
-        res.status(500).send("Error generating RSS feed");
-    }
+  } catch (error) {
+    console.error("Error generating Real RSS:", error);
+    res.status(500).send("Error generating RSS feed");
+  }
 };
 
 
@@ -1432,162 +1431,4 @@ exports.getRewriteRSS = async (req, res) => {
 // /news/apidata - API endpoint for news data
 exports.getApiData = async (req, res) => {
   return exports.getAllNews(req, res);
-};
-// Temporary file - will replace getRealRSS function
-exports.getRealRSS = async (req, res) => {
-    try {
-        const {
-            limit = 50,
-            source
-        } = req.query;
-
-        const RSS_SOURCES = [
-            { name: 'TV9 Marathi', url: 'https://www.tv9marathi.com/feed' },
-            { name: 'Zee News Marathi', url: 'https://zeenews.india.com/marathi/rss.xml' },
-            { name: 'Saam TV', url: 'https://www.saamtv.com/feed/' },
-            { name: 'Divya Marathi', url: 'https://divyamarathi.bhaskar.com/rss-v1--category-12019.xml' }
-        ];
-
-        const sourcesToFetch = source
-            ? RSS_SOURCES.filter(s => s.name.toLowerCase().includes(source.toLowerCase()))
-            : RSS_SOURCES;
-
-        console.log(`[Real RSS] Fetching from ${sourcesToFetch.length} sources...`);
-
-        const feedPromises = sourcesToFetch.map(async (src) => {
-            try {
-                console.log(`[Real RSS] Fetching: ${src.name} - ${src.url}`);
-                const feed = await parser.parseURL(src.url);
-                return { source: src.name, feed, error: null };
-            } catch (error) {
-                console.error(`[Real RSS] Error fetching ${src.name}:`, error.message);
-                return { source: src.name, feed: null, error: error.message };
-            }
-        });
-
-        const results = await Promise.all(feedPromises);
-
-        let allItems = [];
-        results.forEach(result => {
-            if (result.feed && result.feed.items) {
-                result.feed.items.forEach(item => {
-                    allItems.push({
-                        ...item,
-                        sourceName: result.source
-                    });
-                });
-            }
-        });
-
-        allItems.sort((a, b) => {
-            const dateA = a.pubDate ? new Date(a.pubDate) : new Date(0);
-            const dateB = b.pubDate ? new Date(b.pubDate) : new Date(0);
-            return dateB - dateA;
-        });
-
-        allItems = allItems.slice(0, parseInt(limit));
-
-        const baseUrl = getBaseUrl(req);
-        const rssUrl = `${baseUrl}${req.originalUrl}`;
-
-        const channelTitle = 'Real Marathi News Feed';
-        const channelDescription = 'Direct feed from multiple Marathi news sources';
-        const channelLink = `${baseUrl}/real/news/rss`;
-
-        let rssXml = `<?xml version="1.0" encoding="UTF-8"?>
-<rss xmlns:media="http://search.yahoo.com/mrss/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
-<channel>
-<title><![CDATA[${channelTitle}]]></title>
-<link>${escapeXml(channelLink)}</link>
-<atom:link href="${escapeXml(rssUrl)}" rel="self" type="application/rss+xml"/>
-<description>
-<![CDATA[ ${channelDescription} ]]>
-</description>
-<language>mr</language>
-<lastBuildDate>${formatRFC822Date(new Date())}</lastBuildDate>
-<pubDate>${formatRFC822Date(new Date())}</pubDate>
-<image>
-<title><![CDATA[${channelTitle}]]></title>
-<url>${escapeXml(baseUrl)}/logo.png</url>
-<link>${escapeXml(channelLink)}</link>
-</image>
-`;
-
-        for (const item of allItems) {
-            const title = (item.title || '').trim();
-            const link = item.link || '';
-            const guid = link;
-            const isGuidUrl = isValidUrl(guid);
-
-            let description = '';
-            if (item['content:encoded']) {
-                description = item['content:encoded'];
-            } else if (item.content) {
-                description = item.content;
-            } else if (item.contentSnippet) {
-                description = item.contentSnippet;
-            } else if (item.description) {
-                description = item.description;
-            }
-
-            if (description.includes('<') && !description.includes('<p>')) {
-                description = cleanDescription(description);
-            }
-
-            const pubDate = item.pubDate ? formatRFC822Date(new Date(item.pubDate)) : formatRFC822Date(new Date());
-
-            let imageUrl = null;
-            if (item['content:encoded']) {
-                const imgMatch = item['content:encoded'].match(/<img[^>]+src=["']([^"']+)["']/i);
-                if (imgMatch && imgMatch[1]) imageUrl = imgMatch[1];
-            }
-            if (!imageUrl && item.content) {
-                const imgMatch = item.content.match(/<img[^>]+src=["']([^"']+)["']/i);
-                if (imgMatch && imgMatch[1]) imageUrl = imgMatch[1];
-            }
-            if (!imageUrl && item['media:content']) {
-                imageUrl = item['media:content']?.url || item['media:content']?.$?.url;
-            }
-            if (!imageUrl && item['media:thumbnail']) {
-                imageUrl = item['media:thumbnail']?.url || item['media:thumbnail']?.$?.url;
-            }
-            if (!imageUrl && item.enclosure) {
-                imageUrl = item.enclosure.url;
-            }
-
-            rssXml += `<item>
-<title>
-<![CDATA[ ${title} ]]>
-</title>
-<link>${escapeXml(link)}</link>
-<guid isPermaLink="${isGuidUrl ? 'true' : 'false'}">${escapeXml(guid)}</guid>
-<atom:link href="${escapeXml(link)}"/>
-<description>
-<![CDATA[ ${description} ]]>
-</description>
-<pubDate>${pubDate}</pubDate>
-`;
-
-            if (imageUrl) {
-                rssXml += `<media:content url="${escapeXml(imageUrl)}" type="image/jpeg" width="1000" height="1000"/>
-`;
-            }
-
-            rssXml += `<source>${escapeXml(item.sourceName)}</source>
-`;
-
-            rssXml += `</item>
-`;
-        }
-
-        rssXml += `</channel>
-</rss>`;
-
-        res.set('Content-Type', 'application/rss+xml; charset=utf-8');
-        res.send(rssXml);
-
-    } catch (error) {
-        console.error("Error generating Real RSS:", error);
-        res.status(500).send("Error generating RSS feed");
-    }
 };

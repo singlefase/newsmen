@@ -52,7 +52,7 @@ app.use("/news", newsRoutes);
 app.use("/api/news", newsRoutes); // Alternative API path
 
 // Custom RSS Routes (Top Level)
-app.get("/news/rss", newsController.getRealRSS);
+app.get("/real/news/rss", newsController.getRealRSS);
 app.get("/rewrite/news/rss", newsController.getRewriteRSS);
 
 // Root endpoint

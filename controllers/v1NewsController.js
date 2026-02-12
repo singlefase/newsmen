@@ -1,0 +1,966 @@
+/**
+ * V1 News Controller - New 6 APIs + getRealRSS
+ * Implements all new APIs as per architecture proposal
+ */
+
+const { ObjectId } = require("mongodb");
+const Parser = require("rss-parser");
+const { GoogleGenAI } = require("@google/genai");
+const { connectToDatabase } = require("../config/database");
+const {
+  downloadAndUploadImage,
+  extractImageUrlFromRSSItem,
+} = require("../services/r2ImageService");
+const {
+  isLinkFetched,
+  markLinkAsFetched,
+  googleNewsExists,
+} = require("../utils/deduplication");
+const {
+  escapeXml,
+  cleanDescription,
+  formatRFC822Date,
+  getBaseUrl,
+  isValidUrl,
+} = require("../utils/rssUtils");
+
+const parser = new Parser();
+
+// ---------------- CONFIGURATION ----------------
+const ALLOWED_KEYWORDS = [
+  "सरकार",
+  "राज्य",
+  "महापालिका",
+  "पालिका",
+  "प्रशासन",
+  "मंत्री",
+  "आमदार",
+  "खासदार",
+  "निवडणूक",
+  "विकास",
+  "योजना",
+  "सभा",
+  "निर्णय",
+];
+
+const BLOCKED_KEYWORDS = [
+  "खून",
+  "हत्या",
+  "आत्महत्या",
+  "अपघात",
+  "बलात्कार",
+  "गोळीबार",
+  "चाकू",
+  "गुन्हा",
+];
+
+const RSS_SOURCES = [
+  { name: "TV9 Marathi", url: "https://www.tv9marathi.com/feed" },
+  {
+    name: "Zee News Marathi",
+    url: "https://zeenews.india.com/marathi/rss.xml",
+  },
+  { name: "Saam TV", url: "https://www.saamtv.com/feed/" },
+  {
+    name: "Divya Marathi",
+    url: "https://divyamarathi.bhaskar.com/rss-v1--category-12019.xml",
+  },
+];
+
+// ---------------- HELPER FUNCTIONS ----------------
+function isProperMarathi(text = "") {
+  if (!text) return false;
+  const mr = (text.match(/[\u0900-\u097F]/g) || []).length;
+  return /^[\u0900-\u097F]/.test(text.trim()) && mr / text.length >= 0.6;
+}
+
+function containsAllowedTopic(text = "") {
+  return ALLOWED_KEYWORDS.some((k) => text.includes(k));
+}
+
+function containsBlockedTopic(text = "") {
+  const foundKeywords = BLOCKED_KEYWORDS.filter((k) => text.includes(k));
+  return foundKeywords.length >= 2;
+}
+
+function cleanTitle(title = "") {
+  return title.replace(/ - .*$/, "").replace(/\|.*$/, "").trim();
+}
+
+// Get collection helper
+async function getCollection(collectionName) {
+  const { mongodb } = await connectToDatabase();
+  return mongodb.collection(collectionName);
+}
+
+// AI Rewriting function
+async function rewriteMarathiInshortsStyle({ title, summary, source }) {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY not configured");
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+
+    const prompt = `
+तुम्ही Inshorts-style मराठी न्यूज रायटर आहात.
+
+खालील बातमी 60-80 शब्दांत, लहान, सोपी आणि तथ्यात्मक पद्धतीने पुन्हा लिहा.
+
+नियम:
+- मूळ मजकूर कॉपी करू नका - पूर्णपणे मूळ लिहा
+- 3-4 छोटी वाक्ये
+- मत मांडू नका
+- साधी, स्पष्ट मराठी
+- फक्त मुख्य तथ्ये
+- शेवटी निष्कर्ष देऊ नका
+
+शीर्षक: ${title}
+स्रोत: ${source}
+सारांश: ${summary}
+
+फक्त पुन्हा लिहिलेली बातमी द्या (60-80 शब्द).
+`;
+
+    const res = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+    });
+
+    return res.text.trim();
+  } catch (error) {
+    console.error("Gemini Inshorts rewriting error:", error.message);
+    const shortSummary = summary ? summary.substring(0, 200) + "..." : title;
+    return shortSummary;
+  }
+}
+
+// ---------------- API 1: Google News RSS Fetcher & Storage ----------------
+exports.fetchGoogleNews = async (req, res) => {
+  try {
+    console.log("\n🚀 [API 1] Fetching Google News RSS...");
+    const {
+      query = "पुणे",
+      limit = 10,
+      language = "mr",
+      country = "IN",
+      strictFilter = false,
+      category = "general",
+    } = req.body;
+
+    // Build RSS URL
+    let RSS_URL;
+    if (query && query.trim() !== "") {
+      RSS_URL = `https://news.google.com/rss/search?q=${encodeURIComponent(
+        query
+      )}&hl=${language}&gl=${country}&ceid=${country}:${language}`;
+    } else {
+      const topicMap = {
+        general: "https://news.google.com/rss?hl=en&gl=IN&ceid=IN:en",
+        politics:
+          "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFZxYUdjU0FtVnVHZ0pWVXlnQVAB?hl=en&gl=IN&ceid=IN:en",
+        technology:
+          "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGRqTVhZU0FtVnVHZ0pWVXlnQVAB?hl=en&gl=IN&ceid=IN:en",
+        sports:
+          "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp1YVdjU0FtVnVHZ0pWVXlnQVAB?hl=en&gl=IN&ceid=IN:en",
+        business:
+          "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtVnVHZ0pWVXlnQVAB?hl=en&gl=IN&ceid=IN:en",
+      };
+      RSS_URL = topicMap[category] || topicMap["general"];
+    }
+
+    console.log(`📰 RSS URL: ${RSS_URL}`);
+
+    // Fetch RSS feed
+    let feed;
+    try {
+      feed = await parser.parseURL(RSS_URL);
+    } catch (rssError) {
+      console.error("❌ RSS Feed Error:", rssError.message);
+      return res.status(500).json({
+        success: false,
+        message: "Error fetching RSS feed",
+        error: rssError.message,
+      });
+    }
+
+    if (!feed || !feed.items || feed.items.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No news items found in RSS feed",
+        news: [],
+      });
+    }
+
+    console.log(`✅ RSS feed loaded: ${feed.items.length} items found`);
+
+    const collection = await getCollection("google_rss_news_legal");
+    const collected = [];
+    let savedCount = 0;
+    let skippedCount = 0;
+
+    // Process and filter news
+    for (const item of feed.items) {
+      if (collected.length >= limit) break;
+
+      const title = cleanTitle(item.title || "");
+      const summary = item.contentSnippet || item.content || "";
+      const text = `${title} ${summary}`;
+
+      // Apply filters
+      if (strictFilter) {
+        if (
+          !isProperMarathi(title) ||
+          !containsAllowedTopic(text) ||
+          containsBlockedTopic(text)
+        ) {
+          continue;
+        }
+      }
+
+      // Check if already exists (deduplication)
+      const link = item.link || "";
+      if (link && (await googleNewsExists(link))) {
+        console.log(`  ⏭️  Skipping duplicate: ${title.substring(0, 50)}...`);
+        skippedCount++;
+        continue;
+      }
+
+      // Extract image URL
+      let imageUrl = null;
+      if (item.content) {
+        const imgMatch = item.content.match(/<img[^>]+src=["']([^"']+)["']/i);
+        if (imgMatch && imgMatch[1]) {
+          imageUrl = imgMatch[1];
+        }
+      }
+      if (!imageUrl && item["media:thumbnail"]?.url) {
+        imageUrl = item["media:thumbnail"].url;
+      }
+      if (!imageUrl && item["media:content"]?.url) {
+        imageUrl = item["media:content"].url;
+      }
+
+      // Extract reporter name
+      let reporterName =
+        item.creator ||
+        item.author ||
+        item["dc:creator"] ||
+        item["dc:author"] ||
+        null;
+
+      // Create news article
+      const newsArticle = {
+        title: title,
+        originalSummary: summary,
+        source: item.source?.title || feed.title || "Google News",
+        link: link,
+        imageUrl: imageUrl || null,
+        reporterName: reporterName,
+        publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
+        fetchedAt: new Date(),
+        category: category || "general",
+        language: language || "mr",
+        query: query,
+        // Legal compliance fields
+        originalSource: item.source?.title || feed.title || "Google News",
+        hasOriginalLink: !!link,
+        isFromGoogleNews: true,
+      };
+
+      // Save to database
+      try {
+        await collection.insertOne(newsArticle);
+        savedCount++;
+        collected.push(newsArticle);
+        console.log(`  💾 Saved: ${title.substring(0, 50)}...`);
+      } catch (dbError) {
+        if (dbError.code === 11000) {
+          // Duplicate key error
+          skippedCount++;
+          console.log(`  ⏭️  Duplicate skipped: ${title.substring(0, 50)}...`);
+        } else {
+          console.error(`  ❌ Database error: ${dbError.message}`);
+        }
+      }
+    }
+
+    console.log(
+      `\n✅ Processing complete: ${savedCount} saved, ${skippedCount} skipped\n`
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully fetched and stored ${savedCount} news articles`,
+      count: savedCount,
+      skipped: skippedCount,
+      news: collected,
+    });
+  } catch (error) {
+    console.error("❌ Error in fetchGoogleNews:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error fetching Google News",
+      error: error.message,
+    });
+  }
+};
+
+// ---------------- API 2: Legal News Retrieval from Google News Collection ----------------
+exports.getGoogleNews = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      category,
+      language,
+      search,
+      dateFrom,
+      dateTo,
+    } = req.query;
+
+    const collection = await getCollection("google_rss_news_legal");
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Build query
+    const query = {};
+    if (category) query.category = category;
+    if (language) query.language = language;
+    if (search) {
+      query.$or = [
+        { title: { $regex: search, $options: "i" } },
+        { originalSummary: { $regex: search, $options: "i" } },
+      ];
+    }
+    if (dateFrom || dateTo) {
+      query.publishedAt = {};
+      if (dateFrom) query.publishedAt.$gte = new Date(dateFrom);
+      if (dateTo) query.publishedAt.$lte = new Date(dateTo);
+    }
+
+    // Fetch news
+    const news = await collection
+      .find(query)
+      .sort({ publishedAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .toArray();
+
+    const total = await collection.countDocuments(query);
+
+    // Format response with legal compliance
+    const formattedNews = news.map((item) => ({
+      id: item._id.toString(),
+      title: item.title,
+      summary: item.originalSummary,
+      source: item.source,
+      sourceLink: item.link,
+      imageUrl: item.imageUrl,
+      publishedAt: item.publishedAt,
+      category: item.category,
+      language: item.language,
+      attribution: {
+        source: item.originalSource,
+        originalLink: item.link,
+        publishedDate: item.publishedAt,
+      },
+      navigation: {
+        detailUrl: `/news/google-news/${item._id}`,
+        sourceUrl: item.link,
+        shareUrl: `/share/google-news/${item._id}`,
+      },
+      disclaimer:
+        "This is a summary of publicly available news. Click source link for full article.",
+    }));
+
+    return res.status(200).json({
+      success: true,
+      news: formattedNews,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: total,
+        pages: Math.ceil(total / parseInt(limit)),
+      },
+    });
+  } catch (error) {
+    console.error("Error in getGoogleNews:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error fetching news",
+      error: error.message,
+    });
+  }
+};
+
+// ---------------- API 3: External RSS Fetcher with Image Download ----------------
+exports.fetchExternalRSS = async (req, res) => {
+  try {
+    console.log("\n🚀 [API 3] Fetching External RSS with Image Download...");
+    const { source, limit = 6 } = req.body;
+
+    const sourcesToFetch = source
+      ? RSS_SOURCES.filter((s) =>
+          s.name.toLowerCase().includes(source.toLowerCase())
+        )
+      : RSS_SOURCES;
+
+    console.log(`📰 Fetching from ${sourcesToFetch.length} sources...`);
+
+    const allItems = [];
+    let fetchedCount = 0;
+
+    // Fetch from each source
+    for (const src of sourcesToFetch) {
+      if (fetchedCount >= limit) break;
+
+      try {
+        console.log(`  📡 Fetching: ${src.name} - ${src.url}`);
+        const feed = await parser.parseURL(src.url);
+
+        if (!feed || !feed.items || feed.items.length === 0) {
+          console.log(`  ⚠️  No items in ${src.name}`);
+          continue;
+        }
+
+        // Process items from this source
+        for (const item of feed.items) {
+          if (fetchedCount >= limit) break;
+
+          const link = item.link || "";
+          if (!link) continue;
+
+          // Check if already fetched from this source
+          if (await isLinkFetched(src.name, link)) {
+            console.log(`  ⏭️  Already fetched from ${src.name}: ${link.substring(0, 50)}...`);
+            continue;
+          }
+
+          // Extract image URL
+          const originalImageUrl = extractImageUrlFromRSSItem(item);
+          let r2ImageUrl = null;
+          let imageDownloaded = false;
+          let imageUploaded = false;
+
+          // Download and upload image if available
+          if (originalImageUrl) {
+            console.log(`  📸 Processing image for: ${item.title?.substring(0, 50)}...`);
+            const imageResult = await downloadAndUploadImage(
+              originalImageUrl,
+              src.name.replace(/\s+/g, "-").toLowerCase()
+            );
+
+            if (imageResult.success) {
+              r2ImageUrl = imageResult.url;
+              imageDownloaded = true;
+              imageUploaded = true;
+            } else {
+              console.log(`  ⚠️  Image upload failed: ${imageResult.error}`);
+            }
+          }
+
+          // Create news article object
+          const newsArticle = {
+            sourceName: src.name,
+            sourceUrl: src.url,
+            title: item.title || "",
+            link: link,
+            guid: item.guid || link,
+            description: item.description || "",
+            content: item["content:encoded"] || item.content || "",
+            contentSnippet: item.contentSnippet || "",
+            pubDate: item.pubDate || "",
+            publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
+            originalImageUrl: originalImageUrl,
+            r2ImageUrl: r2ImageUrl,
+            imageDownloaded: imageDownloaded,
+            imageUploaded: imageUploaded,
+            mediaContent: item["media:content"] || null,
+            mediaThumbnail: item["media:thumbnail"] || null,
+            enclosure: item.enclosure || null,
+            fetchedAt: new Date(),
+            processed: false,
+            processedAt: null,
+            rawRssData: item, // Store complete RSS item
+          };
+
+          // Save to database
+          const collection = await getCollection("unprocessed_news_data");
+          await collection.insertOne(newsArticle);
+
+          // Mark as fetched
+          await markLinkAsFetched(src.name, link);
+
+          allItems.push(newsArticle);
+          fetchedCount++;
+          console.log(`  ✅ Saved: ${item.title?.substring(0, 50)}...`);
+        }
+      } catch (error) {
+        console.error(`  ❌ Error fetching ${src.name}:`, error.message);
+        continue;
+      }
+    }
+
+    console.log(`\n✅ Fetched ${fetchedCount} news items with images\n`);
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully fetched ${fetchedCount} news items`,
+      count: fetchedCount,
+      news: allItems.map((item) => ({
+        id: item._id?.toString(),
+        title: item.title,
+        source: item.sourceName,
+        link: item.link,
+        imageUrl: item.r2ImageUrl || item.originalImageUrl,
+      })),
+    });
+  } catch (error) {
+    console.error("❌ Error in fetchExternalRSS:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error fetching external RSS",
+      error: error.message,
+    });
+  }
+};
+
+// ---------------- API 4: News Processing with AI Rewriting ----------------
+exports.processNews = async (req, res) => {
+  try {
+    console.log("\n🚀 [API 4] Processing news with AI...");
+
+    const collection = await getCollection("unprocessed_news_data");
+    const processedCollection = await getCollection("processed_news_data");
+
+    // Fetch one unprocessed news (oldest first)
+    const unprocessedNews = await collection
+      .findOne(
+        { processed: false },
+        { sort: { fetchedAt: 1 } } // Oldest first
+      );
+
+    if (!unprocessedNews) {
+      console.log("  ℹ️  No unprocessed news found");
+      return res.status(200).json({
+        success: true,
+        message: "No unprocessed news to process",
+        processed: false,
+      });
+    }
+
+    console.log(`  📰 Processing: ${unprocessedNews.title?.substring(0, 50)}...`);
+
+    // Rewrite with AI
+    let rewrittenDescription;
+    try {
+      rewrittenDescription = await rewriteMarathiInshortsStyle({
+        title: unprocessedNews.title,
+        summary: unprocessedNews.description || unprocessedNews.contentSnippet || "",
+        source: unprocessedNews.sourceName,
+      });
+      console.log(`  ✅ AI rewritten (${rewrittenDescription.length} chars)`);
+    } catch (aiError) {
+      console.error(`  ⚠️  AI rewriting failed: ${aiError.message}`);
+      // Use shortened original as fallback
+      rewrittenDescription =
+        unprocessedNews.description?.substring(0, 200) + "..." ||
+        unprocessedNews.contentSnippet?.substring(0, 200) + "..." ||
+        unprocessedNews.title;
+    }
+
+    // Create processed news article
+    const processedNews = {
+      sourceName: unprocessedNews.sourceName,
+      sourceUrl: unprocessedNews.sourceUrl,
+      title: unprocessedNews.title,
+      rewrittenDescription: rewrittenDescription,
+      originalDescription:
+        unprocessedNews.description || unprocessedNews.contentSnippet || "",
+      link: unprocessedNews.link,
+      guid: unprocessedNews.guid,
+      imageUrl: unprocessedNews.r2ImageUrl || null, // Use R2 URL
+      originalImageUrl: unprocessedNews.originalImageUrl,
+      pubDate: unprocessedNews.pubDate,
+      publishedAt: unprocessedNews.publishedAt,
+      processedAt: new Date(),
+      mediaContent: unprocessedNews.mediaContent,
+      mediaThumbnail: unprocessedNews.mediaThumbnail,
+      enclosure: unprocessedNews.enclosure,
+      language: "mr", // Default to Marathi
+      category: "general", // Default category
+      originalSource: unprocessedNews.sourceName,
+      originalLink: unprocessedNews.link,
+      isRewritten: true,
+      disclaimer:
+        "This is a summary of publicly available news. Content rewritten for clarity. Click source link for full article.",
+      unprocessedNewsId: unprocessedNews._id,
+    };
+
+    // Save to processed collection
+    await processedCollection.insertOne(processedNews);
+
+    // Mark as processed
+    await collection.updateOne(
+      { _id: unprocessedNews._id },
+      {
+        $set: {
+          processed: true,
+          processedAt: new Date(),
+        },
+      }
+    );
+
+    console.log(`  💾 Saved to processed_news_data\n`);
+
+    return res.status(200).json({
+      success: true,
+      message: "News processed successfully",
+      processed: true,
+      news: {
+        id: processedNews._id?.toString(),
+        title: processedNews.title,
+        description: processedNews.rewrittenDescription,
+        imageUrl: processedNews.imageUrl,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Error in processNews:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error processing news",
+      error: error.message,
+    });
+  }
+};
+
+// ---------------- API 5: Valid RSS Feed Generator ----------------
+exports.generateRSSFeed = async (req, res) => {
+  try {
+    const { limit = 20, category, language = "mr", source } = req.query;
+
+    const collection = await getCollection("processed_news_data");
+    const query = {};
+    if (category) query.category = category;
+    if (language) query.language = language;
+    if (source) query.sourceName = source;
+
+    const newsItems = await collection
+      .find(query)
+      .sort({ publishedAt: -1 })
+      .limit(parseInt(limit))
+      .toArray();
+
+    const baseUrl = getBaseUrl(req);
+    const rssUrl = `${baseUrl}${req.originalUrl}`;
+
+    const channelTitle = "News Feed";
+    const channelDescription = "Latest news feed";
+    const channelLink = `${baseUrl}/api/v1/rss-feed`;
+
+    // Build RSS XML (matching Divya Marathi format exactly)
+    let rssXml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:media="http://search.yahoo.com/mrss/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
+<channel>
+<title><![CDATA[${channelTitle}]]></title>
+<link>${escapeXml(channelLink)}</link>
+<atom:link href="${escapeXml(rssUrl)}" rel="self" type="application/rss+xml"/>
+<description>
+<![CDATA[${channelDescription}]]>
+</description>
+<language>${language}</language>
+<lastBuildDate>${formatRFC822Date(new Date())}</lastBuildDate>
+<pubDate>${formatRFC822Date(new Date())}</pubDate>
+<image>
+<title><![CDATA[${channelTitle}]]></title>
+<url>${escapeXml(baseUrl)}/logo.png</url>
+<link>${escapeXml(channelLink)}</link>
+</image>
+`;
+
+    // Add items
+    for (const item of newsItems) {
+      const title = (item.title || "").trim();
+      const link = item.link || `${baseUrl}/news/${item._id}`;
+      let guid = link;
+      if (!guid || !isValidUrl(guid)) {
+        guid = `${baseUrl}/news/${item._id}`;
+      }
+      const isGuidUrl = isValidUrl(guid);
+
+      let description = item.rewrittenDescription || item.originalDescription || "";
+      if (description.includes("<")) {
+        description = cleanDescription(description);
+      }
+      if (description.length > 10000) {
+        description = description.substring(0, 10000) + "...";
+      }
+
+      const pubDate = item.publishedAt
+        ? formatRFC822Date(item.publishedAt)
+        : formatRFC822Date(new Date());
+
+      const imageUrl = item.imageUrl || null;
+
+      rssXml += `<item>
+<title>
+<![CDATA[${title}]]>
+</title>
+<link>${escapeXml(link)}</link>
+<guid isPermaLink="${isGuidUrl ? "true" : "false"}">${escapeXml(guid)}</guid>
+<atom:link href="${escapeXml(link)}"/>
+<description>
+<![CDATA[${description}]]>
+</description>
+<pubDate>${pubDate}</pubDate>
+`;
+
+      if (imageUrl) {
+        rssXml += `<media:content url="${escapeXml(imageUrl)}" type="image/jpeg" width="1000" height="1000"/>
+`;
+      }
+
+      rssXml += `</item>
+`;
+    }
+
+    rssXml += `</channel>
+</rss>`;
+
+    res.set("Content-Type", "application/rss+xml; charset=utf-8");
+    res.send(rssXml);
+  } catch (error) {
+    console.error("Error generating RSS feed:", error);
+    res.set("Content-Type", "application/rss+xml; charset=utf-8");
+    res.status(500).send(
+      `<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:media="http://search.yahoo.com/mrss/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
+<channel>
+<title>Error</title>
+<description>Error generating RSS feed: ${escapeXml(error.message)}</description>
+</channel>
+</rss>`
+    );
+  }
+};
+
+// ---------------- API 6: JSON News Feed ----------------
+exports.getNewsJSON = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      category,
+      language,
+      source,
+      search,
+    } = req.query;
+
+    const collection = await getCollection("processed_news_data");
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const query = {};
+    if (category) query.category = category;
+    if (language) query.language = language;
+    if (source) query.sourceName = source;
+    if (search) {
+      query.$or = [
+        { title: { $regex: search, $options: "i" } },
+        { rewrittenDescription: { $regex: search, $options: "i" } },
+        { originalDescription: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const news = await collection
+      .find(query)
+      .sort({ publishedAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .toArray();
+
+    const total = await collection.countDocuments(query);
+
+    const formattedNews = news.map((item) => ({
+      id: item._id.toString(),
+      title: item.title,
+      description: item.rewrittenDescription || item.originalDescription,
+      image: item.imageUrl,
+      source: item.sourceName,
+      publishedAt: item.publishedAt,
+      category: item.category,
+      language: item.language,
+      originalLink: item.originalLink,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      news: formattedNews,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: total,
+        pages: Math.ceil(total / parseInt(limit)),
+      },
+    });
+  } catch (error) {
+    console.error("Error in getNewsJSON:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error fetching news",
+      error: error.message,
+    });
+  }
+};
+
+// ---------------- API 7: getRealRSS (Keep from old code) ----------------
+exports.getRealRSS = async (req, res) => {
+  try {
+    const { limit = 50, source } = req.query;
+
+    const sourcesToFetch = source
+      ? RSS_SOURCES.filter((s) =>
+          s.name.toLowerCase().includes(source.toLowerCase())
+        )
+      : RSS_SOURCES;
+
+    console.log(`[Real RSS] Fetching from ${sourcesToFetch.length} sources...`);
+
+    const feedPromises = sourcesToFetch.map(async (src) => {
+      try {
+        console.log(`[Real RSS] Fetching: ${src.name} - ${src.url}`);
+        const feed = await parser.parseURL(src.url);
+        return { source: src.name, feed, error: null };
+      } catch (error) {
+        console.error(`[Real RSS] Error fetching ${src.name}:`, error.message);
+        return { source: src.name, feed: null, error: error.message };
+      }
+    });
+
+    const results = await Promise.all(feedPromises);
+
+    let allItems = [];
+    results.forEach((result) => {
+      if (result.feed && result.feed.items) {
+        result.feed.items.forEach((item) => {
+          allItems.push({
+            ...item,
+            sourceName: result.source,
+          });
+        });
+      }
+    });
+
+    allItems.sort((a, b) => {
+      const dateA = a.pubDate ? new Date(a.pubDate) : new Date(0);
+      const dateB = b.pubDate ? new Date(b.pubDate) : new Date(0);
+      return dateB - dateA;
+    });
+
+    allItems = allItems.slice(0, parseInt(limit));
+
+    const baseUrl = getBaseUrl(req);
+    const rssUrl = `${baseUrl}${req.originalUrl}`;
+
+    const channelTitle = "Real Marathi News Feed";
+    const channelDescription = "Direct feed from multiple Marathi news sources";
+    const channelLink = `${baseUrl}/real/news/rss`;
+
+    let rssXml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:media="http://search.yahoo.com/mrss/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
+<channel>
+<title><![CDATA[${channelTitle}]]></title>
+<link>${escapeXml(channelLink)}</link>
+<atom:link href="${escapeXml(rssUrl)}" rel="self" type="application/rss+xml"/>
+<description>
+<![CDATA[${channelDescription}]]>
+</description>
+<language>mr</language>
+<lastBuildDate>${formatRFC822Date(new Date())}</lastBuildDate>
+<pubDate>${formatRFC822Date(new Date())}</pubDate>
+<image>
+<title><![CDATA[${channelTitle}]]></title>
+<url>${escapeXml(baseUrl)}/logo.png</url>
+<link>${escapeXml(channelLink)}</link>
+</image>
+`;
+
+    for (const item of allItems) {
+      const title = (item.title || "").trim();
+      const link = item.link || "";
+      const guid = link;
+      const isGuidUrl = isValidUrl(guid);
+
+      let description = "";
+      if (item["content:encoded"]) {
+        description = item["content:encoded"];
+      } else if (item.content) {
+        description = item.content;
+      } else if (item.contentSnippet) {
+        description = item.contentSnippet;
+      } else if (item.description) {
+        description = item.description;
+      }
+
+      if (description.includes("<") && !description.includes("<p>")) {
+        description = cleanDescription(description);
+      }
+
+      const pubDate = item.pubDate
+        ? formatRFC822Date(new Date(item.pubDate))
+        : formatRFC822Date(new Date());
+
+      let imageUrl = null;
+      if (item["content:encoded"]) {
+        const imgMatch = item["content:encoded"].match(
+          /<img[^>]+src=["']([^"']+)["']/i
+        );
+        if (imgMatch && imgMatch[1]) imageUrl = imgMatch[1];
+      }
+      if (!imageUrl && item.content) {
+        const imgMatch = item.content.match(/<img[^>]+src=["']([^"']+)["']/i);
+        if (imgMatch && imgMatch[1]) imageUrl = imgMatch[1];
+      }
+      if (!imageUrl && item["media:content"]) {
+        imageUrl = item["media:content"]?.url || item["media:content"]?.$?.url;
+      }
+      if (!imageUrl && item["media:thumbnail"]) {
+        imageUrl =
+          item["media:thumbnail"]?.url || item["media:thumbnail"]?.$?.url;
+      }
+      if (!imageUrl && item.enclosure) {
+        imageUrl = item.enclosure.url;
+      }
+
+      rssXml += `<item>
+<title>
+<![CDATA[${title}]]>
+</title>
+<link>${escapeXml(link)}</link>
+<guid isPermaLink="${isGuidUrl ? "true" : "false"}">${escapeXml(guid)}</guid>
+<atom:link href="${escapeXml(link)}"/>
+<description>
+<![CDATA[${description}]]>
+</description>
+<pubDate>${pubDate}</pubDate>
+`;
+
+      if (imageUrl) {
+        rssXml += `<media:content url="${escapeXml(imageUrl)}" type="image/jpeg" width="1000" height="1000"/>
+`;
+      }
+
+      rssXml += `</item>
+`;
+    }
+
+    rssXml += `</channel>
+</rss>`;
+
+    res.set("Content-Type", "application/rss+xml; charset=utf-8");
+    res.send(rssXml);
+  } catch (error) {
+    console.error("Error generating Real RSS:", error);
+    res.status(500).send("Error generating RSS feed");
+  }
+};

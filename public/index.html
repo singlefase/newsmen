@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>News API Tester</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+
+        .tabs {
+            display: flex;
+            background: #f5f5f5;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            background: #f5f5f5;
+            border: none;
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #666;
+            transition: all 0.3s;
+            position: relative;
+        }
+
+        .tab:hover {
+            background: #e8e8e8;
+        }
+
+        .tab.active {
+            background: white;
+            color: #667eea;
+        }
+
+        .tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: #667eea;
+        }
+
+        .tab-content {
+            display: none;
+            padding: 30px;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .api-section {
+            margin-bottom: 30px;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            overflow: hidden;
+            background: #fafafa;
+        }
+
+        .api-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .api-header h2 {
+            font-size: 1.5em;
+            margin: 0;
+        }
+
+        .api-status {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: 600;
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .api-status.loading {
+            background: #ffa726;
+        }
+
+        .api-status.success {
+            background: #66bb6a;
+        }
+
+        .api-status.error {
+            background: #ef5350;
+        }
+
+        .api-body {
+            padding: 25px;
+        }
+
+        .api-description {
+            color: #666;
+            margin-bottom: 20px;
+            line-height: 1.6;
+        }
+
+        .api-controls {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .input-group {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+            font-size: 0.9em;
+        }
+
+        .input-group input,
+        .input-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        .input-group input:focus,
+        .input-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .response-section {
+            margin-top: 20px;
+        }
+
+        .response-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .response-header h3 {
+            color: #333;
+            font-size: 1.2em;
+        }
+
+        .clear-btn {
+            padding: 8px 16px;
+            background: #f5f5f5;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: all 0.3s;
+        }
+
+        .clear-btn:hover {
+            background: #e8e8e8;
+        }
+
+        .response-box {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            border-radius: 8px;
+            max-height: 500px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            line-height: 1.6;
+        }
+
+        .response-box pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .response-box.success {
+            border-left: 4px solid #66bb6a;
+        }
+
+        .response-box.error {
+            border-left: 4px solid #ef5350;
+        }
+
+        .info-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            background: #e3f2fd;
+            color: #1976d2;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            border: 2px solid #e0e0e0;
+            text-align: center;
+        }
+
+        .stat-card .stat-value {
+            font-size: 2em;
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        .stat-card .stat-label {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 1.8em;
+            }
+
+            .api-controls {
+                flex-direction: column;
+            }
+
+            .input-group {
+                min-width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📰 News API Tester</h1>
+            <p>Test all 6 APIs for news aggregation and processing</p>
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab(1)">Tab 1: Google News APIs</button>
+            <button class="tab" onclick="switchTab(2)">Tab 2: External RSS & Processing</button>
+        </div>
+
+        <!-- Tab 1: Google News APIs -->
+        <div id="tab1" class="tab-content active">
+            <!-- API 1: Fetch Google News -->
+            <div class="api-section">
+                <div class="api-header">
+                    <h2>API 1: Fetch Google News RSS</h2>
+                    <span class="api-status" id="api1-status">Ready</span>
+                </div>
+                <div class="api-body">
+                    <div class="api-description">
+                        Fetches news from Google News RSS feeds and stores in MongoDB collection <code>google_rss_news_legal</code>.
+                        <span class="info-badge">POST /api/v1/fetch-google-news</span>
+                    </div>
+                    <div class="api-controls">
+                        <div class="input-group">
+                            <label>Query</label>
+                            <input type="text" id="api1-query" value="पुणे" placeholder="Search query">
+                        </div>
+                        <div class="input-group">
+                            <label>Limit</label>
+                            <input type="number" id="api1-limit" value="10" min="1" max="50">
+                        </div>
+                        <div class="input-group">
+                            <label>Language</label>
+                            <select id="api1-language">
+                                <option value="mr">Marathi (mr)</option>
+                                <option value="en">English (en)</option>
+                                <option value="hi">Hindi (hi)</option>
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label>Category</label>
+                            <select id="api1-category">
+                                <option value="general">General</option>
+                                <option value="politics">Politics</option>
+                                <option value="technology">Technology</option>
+                                <option value="sports">Sports</option>
+                                <option value="business">Business</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="api-controls">
+                        <label style="display: flex; align-items: center; gap: 10px;">
+                            <input type="checkbox" id="api1-strictFilter">
+                            <span>Strict Filter (Marathi + Keywords)</span>
+                        </label>
+                        <button class="btn btn-primary" onclick="callAPI1()">
+                            🚀 Fetch Google News
+                        </button>
+                    </div>
+                    <div class="response-section">
+                        <div class="response-header">
+                            <h3>Response</h3>
+                            <button class="clear-btn" onclick="clearResponse('api1')">Clear</button>
+                        </div>
+                        <div class="response-box" id="api1-response">No response yet...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- API 2: Get Google News -->
+            <div class="api-section">
+                <div class="api-header">
+                    <h2>API 2: Get Google News (Legal Format)</h2>
+                    <span class="api-status" id="api2-status">Ready</span>
+                </div>
+                <div class="api-body">
+                    <div class="api-description">
+                        Retrieves news from <code>google_rss_news_legal</code> collection with legal compliance format.
+                        <span class="info-badge">GET /api/v1/google-news</span>
+                    </div>
+                    <div class="api-controls">
+                        <div class="input-group">
+                            <label>Page</label>
+                            <input type="number" id="api2-page" value="1" min="1">
+                        </div>
+                        <div class="input-group">
+                            <label>Limit</label>
+                            <input type="number" id="api2-limit" value="10" min="1" max="50">
+                        </div>
+                        <div class="input-group">
+                            <label>Category</label>
+                            <input type="text" id="api2-category" placeholder="Leave empty for all">
+                        </div>
+                        <div class="input-group">
+                            <label>Language</label>
+                            <input type="text" id="api2-language" placeholder="e.g., mr, en">
+                        </div>
+                    </div>
+                    <div class="api-controls">
+                        <div class="input-group">
+                            <label>Search</label>
+                            <input type="text" id="api2-search" placeholder="Search in title/summary">
+                        </div>
+                        <button class="btn btn-primary" onclick="callAPI2()">
+                            📰 Get Google News
+                        </button>
+                    </div>
+                    <div class="response-section">
+                        <div class="response-header">
+                            <h3>Response</h3>
+                            <button class="clear-btn" onclick="clearResponse('api2')">Clear</button>
+                        </div>
+                        <div class="response-box" id="api2-response">No response yet...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 2: External RSS & Processing -->
+        <div id="tab2" class="tab-content">
+            <!-- API 3: Fetch External RSS -->
+            <div class="api-section">
+                <div class="api-header">
+                    <h2>API 3: Fetch External RSS with Image Download</h2>
+                    <span class="api-status" id="api3-status">Ready</span>
+                </div>
+                <div class="api-body">
+                    <div class="api-description">
+                        Fetches news from external RSS sources (TV9, Zee, Saam TV, Divya Marathi), downloads images to R2, and stores in <code>unprocessed_news_data</code>.
+                        <span class="info-badge">POST /api/v1/fetch-external-rss</span>
+                    </div>
+                    <div class="api-controls">
+                        <div class="input-group">
+                            <label>Source (Optional)</label>
+                            <select id="api3-source">
+                                <option value="">All Sources</option>
+                                <option value="TV9 Marathi">TV9 Marathi</option>
+                                <option value="Zee News Marathi">Zee News Marathi</option>
+                                <option value="Saam TV">Saam TV</option>
+                                <option value="Divya Marathi">Divya Marathi</option>
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label>Limit (News Items)</label>
+                            <input type="number" id="api3-limit" value="6" min="1" max="20">
+                        </div>
+                    </div>
+                    <div class="api-controls">
+                        <button class="btn btn-primary" onclick="callAPI3()">
+                            📡 Fetch External RSS
+                        </button>
+                    </div>
+                    <div class="response-section">
+                        <div class="response-header">
+                            <h3>Response</h3>
+                            <button class="clear-btn" onclick="clearResponse('api3')">Clear</button>
+                        </div>
+                        <div class="response-box" id="api3-response">No response yet...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- API 4: Process News -->
+            <div class="api-section">
+                <div class="api-header">
+                    <h2>API 4: Process News with AI Rewriting</h2>
+                    <span class="api-status" id="api4-status">Ready</span>
+                </div>
+                <div class="api-body">
+                    <div class="api-description">
+                        Processes one unprocessed news item from <code>unprocessed_news_data</code>, rewrites with Gemini AI, and stores in <code>processed_news_data</code>.
+                        <span class="info-badge">POST /api/v1/process-news</span>
+                    </div>
+                    <div class="api-controls">
+                        <button class="btn btn-primary" onclick="callAPI4()">
+                            🤖 Process News
+                        </button>
+                    </div>
+                    <div class="response-section">
+                        <div class="response-header">
+                            <h3>Response</h3>
+                            <button class="clear-btn" onclick="clearResponse('api4')">Clear</button>
+                        </div>
+                        <div class="response-box" id="api4-response">No response yet...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- API 5: Generate RSS Feed -->
+            <div class="api-section">
+                <div class="api-header">
+                    <h2>API 5: Generate RSS Feed</h2>
+                    <span class="api-status" id="api5-status">Ready</span>
+                </div>
+                <div class="api-body">
+                    <div class="api-description">
+                        Generates valid RSS 2.0 feed from <code>processed_news_data</code> collection.
+                        <span class="info-badge">GET /api/v1/rss-feed</span>
+                    </div>
+                    <div class="api-controls">
+                        <div class="input-group">
+                            <label>Limit</label>
+                            <input type="number" id="api5-limit" value="20" min="1" max="100">
+                        </div>
+                        <div class="input-group">
+                            <label>Category</label>
+                            <input type="text" id="api5-category" placeholder="Leave empty for all">
+                        </div>
+                        <div class="input-group">
+                            <label>Language</label>
+                            <input type="text" id="api5-language" value="mr" placeholder="e.g., mr">
+                        </div>
+                        <div class="input-group">
+                            <label>Source</label>
+                            <input type="text" id="api5-source" placeholder="Leave empty for all">
+                        </div>
+                    </div>
+                    <div class="api-controls">
+                        <button class="btn btn-primary" onclick="callAPI5()">
+                            📡 Generate RSS Feed
+                        </button>
+                        <button class="btn btn-primary" onclick="callAPI5(true)" style="background: #26a69a;">
+                            🔗 Open RSS Feed
+                        </button>
+                    </div>
+                    <div class="response-section">
+                        <div class="response-header">
+                            <h3>Response</h3>
+                            <button class="clear-btn" onclick="clearResponse('api5')">Clear</button>
+                        </div>
+                        <div class="response-box" id="api5-response">No response yet...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- API 6: Get News JSON -->
+            <div class="api-section">
+                <div class="api-header">
+                    <h2>API 6: Get News JSON</h2>
+                    <span class="api-status" id="api6-status">Ready</span>
+                </div>
+                <div class="api-body">
+                    <div class="api-description">
+                        Returns news from <code>processed_news_data</code> in JSON format (title, description, image).
+                        <span class="info-badge">GET /api/v1/news</span>
+                    </div>
+                    <div class="api-controls">
+                        <div class="input-group">
+                            <label>Page</label>
+                            <input type="number" id="api6-page" value="1" min="1">
+                        </div>
+                        <div class="input-group">
+                            <label>Limit</label>
+                            <input type="number" id="api6-limit" value="20" min="1" max="50">
+                        </div>
+                        <div class="input-group">
+                            <label>Category</label>
+                            <input type="text" id="api6-category" placeholder="Leave empty for all">
+                        </div>
+                        <div class="input-group">
+                            <label>Language</label>
+                            <input type="text" id="api6-language" placeholder="e.g., mr">
+                        </div>
+                    </div>
+                    <div class="api-controls">
+                        <div class="input-group">
+                            <label>Search</label>
+                            <input type="text" id="api6-search" placeholder="Search in title/description">
+                        </div>
+                        <div class="input-group">
+                            <label>Source</label>
+                            <input type="text" id="api6-source" placeholder="Leave empty for all">
+                        </div>
+                        <button class="btn btn-primary" onclick="callAPI6()">
+                            📰 Get News JSON
+                        </button>
+                    </div>
+                    <div class="response-section">
+                        <div class="response-header">
+                            <h3>Response</h3>
+                            <button class="clear-btn" onclick="clearResponse('api6')">Clear</button>
+                        </div>
+                        <div class="response-box" id="api6-response">No response yet...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = window.location.origin;
+
+        function switchTab(tabNumber) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+
+            // Show selected tab
+            document.getElementById(`tab${tabNumber}`).classList.add('active');
+            document.querySelectorAll('.tab')[tabNumber - 1].classList.add('active');
+        }
+
+        function updateStatus(apiNum, status, message) {
+            const statusEl = document.getElementById(`api${apiNum}-status`);
+            statusEl.className = `api-status ${status}`;
+            statusEl.textContent = message;
+        }
+
+        function updateResponse(apiNum, data, isError = false) {
+            const responseEl = document.getElementById(`api${apiNum}-response`);
+            responseEl.className = `response-box ${isError ? 'error' : 'success'}`;
+            
+            if (typeof data === 'object') {
+                responseEl.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+            } else {
+                responseEl.innerHTML = `<pre>${data}</pre>`;
+            }
+        }
+
+        function clearResponse(apiNum) {
+            const responseEl = document.getElementById(`${apiNum}-response`);
+            responseEl.className = 'response-box';
+            responseEl.textContent = 'No response yet...';
+        }
+
+        async function callAPI1() {
+            updateStatus(1, 'loading', 'Loading...');
+            updateResponse(1, 'Fetching Google News...');
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/v1/fetch-google-news`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        query: document.getElementById('api1-query').value,
+                        limit: parseInt(document.getElementById('api1-limit').value),
+                        language: document.getElementById('api1-language').value,
+                        country: 'IN',
+                        strictFilter: document.getElementById('api1-strictFilter').checked,
+                        category: document.getElementById('api1-category').value,
+                    }),
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    updateStatus(1, 'success', 'Success');
+                    updateResponse(1, data);
+                } else {
+                    updateStatus(1, 'error', 'Error');
+                    updateResponse(1, data, true);
+                }
+            } catch (error) {
+                updateStatus(1, 'error', 'Error');
+                updateResponse(1, { error: error.message }, true);
+            }
+        }
+
+        async function callAPI2() {
+            updateStatus(2, 'loading', 'Loading...');
+            updateResponse(2, 'Fetching Google News...');
+
+            try {
+                const params = new URLSearchParams();
+                params.append('page', document.getElementById('api2-page').value);
+                params.append('limit', document.getElementById('api2-limit').value);
+                if (document.getElementById('api2-category').value) {
+                    params.append('category', document.getElementById('api2-category').value);
+                }
+                if (document.getElementById('api2-language').value) {
+                    params.append('language', document.getElementById('api2-language').value);
+                }
+                if (document.getElementById('api2-search').value) {
+                    params.append('search', document.getElementById('api2-search').value);
+                }
+
+                const response = await fetch(`${API_BASE_URL}/api/v1/google-news?${params}`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    updateStatus(2, 'success', `Success (${data.news?.length || 0} items)`);
+                    updateResponse(2, data);
+                } else {
+                    updateStatus(2, 'error', 'Error');
+                    updateResponse(2, data, true);
+                }
+            } catch (error) {
+                updateStatus(2, 'error', 'Error');
+                updateResponse(2, { error: error.message }, true);
+            }
+        }
+
+        async function callAPI3() {
+            updateStatus(3, 'loading', 'Loading...');
+            updateResponse(3, 'Fetching External RSS and downloading images...');
+
+            try {
+                const body = {
+                    limit: parseInt(document.getElementById('api3-limit').value),
+                };
+                const source = document.getElementById('api3-source').value;
+                if (source) {
+                    body.source = source;
+                }
+
+                const response = await fetch(`${API_BASE_URL}/api/v1/fetch-external-rss`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(body),
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    updateStatus(3, 'success', `Success (${data.count || 0} items)`);
+                    updateResponse(3, data);
+                } else {
+                    updateStatus(3, 'error', 'Error');
+                    updateResponse(3, data, true);
+                }
+            } catch (error) {
+                updateStatus(3, 'error', 'Error');
+                updateResponse(3, { error: error.message }, true);
+            }
+        }
+
+        async function callAPI4() {
+            updateStatus(4, 'loading', 'Processing...');
+            updateResponse(4, 'Processing news with AI...');
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/v1/process-news`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    if (data.processed) {
+                        updateStatus(4, 'success', 'Processed');
+                        updateResponse(4, data);
+                    } else {
+                        updateStatus(4, 'success', 'No news to process');
+                        updateResponse(4, data);
+                    }
+                } else {
+                    updateStatus(4, 'error', 'Error');
+                    updateResponse(4, data, true);
+                }
+            } catch (error) {
+                updateStatus(4, 'error', 'Error');
+                updateResponse(4, { error: error.message }, true);
+            }
+        }
+
+        async function callAPI5(openInNewTab = false) {
+            updateStatus(5, 'loading', 'Generating...');
+            updateResponse(5, 'Generating RSS feed...');
+
+            try {
+                const params = new URLSearchParams();
+                params.append('limit', document.getElementById('api5-limit').value);
+                params.append('language', document.getElementById('api5-language').value || 'mr');
+                if (document.getElementById('api5-category').value) {
+                    params.append('category', document.getElementById('api5-category').value);
+                }
+                if (document.getElementById('api5-source').value) {
+                    params.append('source', document.getElementById('api5-source').value);
+                }
+
+                const url = `${API_BASE_URL}/api/v1/rss-feed?${params}`;
+
+                if (openInNewTab) {
+                    window.open(url, '_blank');
+                    updateStatus(5, 'success', 'Opened in new tab');
+                    updateResponse(5, { message: 'RSS feed opened in new tab', url });
+                    return;
+                }
+
+                const response = await fetch(url);
+                const text = await response.text();
+                
+                if (response.ok) {
+                    updateStatus(5, 'success', 'Generated');
+                    updateResponse(5, text.substring(0, 2000) + (text.length > 2000 ? '\n\n... (truncated, use "Open RSS Feed" to see full feed)' : ''));
+                } else {
+                    updateStatus(5, 'error', 'Error');
+                    updateResponse(5, text, true);
+                }
+            } catch (error) {
+                updateStatus(5, 'error', 'Error');
+                updateResponse(5, { error: error.message }, true);
+            }
+        }
+
+        async function callAPI6() {
+            updateStatus(6, 'loading', 'Loading...');
+            updateResponse(6, 'Fetching news...');
+
+            try {
+                const params = new URLSearchParams();
+                params.append('page', document.getElementById('api6-page').value);
+                params.append('limit', document.getElementById('api6-limit').value);
+                if (document.getElementById('api6-category').value) {
+                    params.append('category', document.getElementById('api6-category').value);
+                }
+                if (document.getElementById('api6-language').value) {
+                    params.append('language', document.getElementById('api6-language').value);
+                }
+                if (document.getElementById('api6-search').value) {
+                    params.append('search', document.getElementById('api6-search').value);
+                }
+                if (document.getElementById('api6-source').value) {
+                    params.append('source', document.getElementById('api6-source').value);
+                }
+
+                const response = await fetch(`${API_BASE_URL}/api/v1/news?${params}`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    updateStatus(6, 'success', `Success (${data.news?.length || 0} items)`);
+                    updateResponse(6, data);
+                } else {
+                    updateStatus(6, 'error', 'Error');
+                    updateResponse(6, data, true);
+                }
+            } catch (error) {
+                updateStatus(6, 'error', 'Error');
+                updateResponse(6, { error: error.message }, true);
+            }
+        }
+    </script>
+</body>
+</html>

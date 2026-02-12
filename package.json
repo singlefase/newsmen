@@ -19,6 +19,7 @@
   "license": "MIT",
   "type": "commonjs",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.490.0",
     "@google/genai": "^1.33.0",
     "axios": "^1.13.3",
     "cors": "^2.8.5",

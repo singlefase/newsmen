@@ -2,8 +2,8 @@ const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const { ErrorMiddleware } = require("./middleware/error");
-const newsRoutes = require("./routes/newsRoutes");
-const newsController = require("./controllers/newsController");
+const v1NewsRoutes = require("./routes/v1NewsRoutes");
+const v1NewsController = require("./controllers/v1NewsController");
 
 // Load environment variables
 dotenv.config();
@@ -32,6 +32,9 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Serve static files (frontend)
+app.use(express.static("public"));
+
 // Request logging
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
@@ -47,32 +50,30 @@ app.get("/health", (req, res) => {
   });
 });
 
-// API Routes
-app.use("/news", newsRoutes);
-app.use("/api/news", newsRoutes); // Alternative API path
+// V1 API Routes - New 6 APIs
+app.use("/api/v1", v1NewsRoutes);
 
-// Custom RSS Routes (Top Level)
-app.get("/real/news/rss", newsController.getRealRSS);
-app.get("/rewrite/news/rss", newsController.getRewriteRSS);
+// API 7: Real RSS Feed (Keep from old code)
+app.get("/real/news/rss", v1NewsController.getRealRSS);
 
-// Root endpoint
-app.get("/", (req, res) => {
+// API Documentation endpoint
+app.get("/api", (req, res) => {
   res.json({
     success: true,
-    message: "News Generation Backend API",
+    message: "News Generation Backend API v1",
     version: "1.0.0",
     documentation: {
       health: "GET /health",
-      news: {
-        list: "GET /news or GET /api/news",
-        single: "GET /news/:id",
-        latest: "GET /news/latest",
-        search: "GET /news/search?q=query",
-        fetch: "POST /news/fetch",
-        rss: "GET /news/rss or GET /news/rss.xml",
-        stats: "GET /news/admin/stats",
-        test: "GET /news/test-db"
-      }
+      apis: {
+        "API 1 - Fetch Google News": "POST /api/v1/fetch-google-news",
+        "API 2 - Get Google News": "GET /api/v1/google-news?page=1&limit=10",
+        "API 3 - Fetch External RSS": "POST /api/v1/fetch-external-rss",
+        "API 4 - Process News": "POST /api/v1/process-news",
+        "API 5 - RSS Feed": "GET /api/v1/rss-feed",
+        "API 6 - JSON News": "GET /api/v1/news",
+        "API 7 - Real RSS": "GET /real/news/rss"
+      },
+      frontend: "GET / (API Tester Interface)"
     }
   });
 });
@@ -95,8 +96,10 @@ app.listen(PORT, () => {
   console.log("🚀 News Generation Backend Server");
   console.log("=".repeat(50));
   console.log(`✅ Server running on http://localhost:${PORT}`);
-  console.log(`📰 News API: http://localhost:${PORT}/news`);
-  console.log(`📡 RSS Feed: http://localhost:${PORT}/news/rss`);
+  console.log(`🌐 Frontend Tester: http://localhost:${PORT}/`);
+  console.log(`📰 V1 API: http://localhost:${PORT}/api/v1`);
+  console.log(`📡 RSS Feed: http://localhost:${PORT}/api/v1/rss-feed`);
+  console.log(`📡 Real RSS: http://localhost:${PORT}/real/news/rss`);
   console.log(`💚 Health Check: http://localhost:${PORT}/health`);
   console.log("=".repeat(50) + "\n");
 });

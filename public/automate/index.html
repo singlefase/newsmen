@@ -287,7 +287,7 @@
         log(`[${category}] No new items fetched for this category. RSS feed may already have prior items.`);
       }
 
-      // Step 2: API 4 - Process ALL items in a loop
+      // Step 2: API 4 - Process ALL items with delay between calls (Gemini rate limit)
       let processedCount = 0;
       let hasMore = true;
       while (hasMore) {
@@ -305,6 +305,9 @@
         if (data4.processed) {
           processedCount++;
           log(`[${category}] Processed ${processedCount}: "${(data4.news?.title || "").substring(0, 50)}..." (${data4.remaining} remaining)`);
+          if (data4.remaining > 0) {
+            await new Promise(r => setTimeout(r, 3000));
+          }
         } else {
           hasMore = false;
         }

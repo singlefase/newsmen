@@ -11,6 +11,7 @@ const {
   downloadAndUploadImage,
   extractImageUrlFromRSSItem,
 } = require("../services/r2ImageService");
+const { getStockImage } = require("../services/stockImageService");
 const {
   isLinkFetched,
   markLinkAsFetched,
@@ -57,10 +58,6 @@ const BLOCKED_KEYWORDS = [
 
 const RSS_SOURCES = [
   { name: "TV9 Marathi", url: "https://www.tv9marathi.com/feed" },
-  {
-    name: "Zee News Marathi",
-    url: "https://zeenews.india.com/marathi/rss.xml",
-  },
   { name: "Saam TV", url: "https://www.saamtv.com/feed/" },
   {
     name: "Divya Marathi",
@@ -77,8 +74,8 @@ const CATEGORY_KEYWORDS = {
   nashik: ["नाशिक", "नाशिकात", "नाशिकचा", "नाशिकतील"],
   ahmednagar: ["अहमदनगर", "अहिल्यानगर"],
   aurangabad: ["औरंगाबाद", "संभाजीनगर"],
-  political: ["राजकारण", "राजकीय", "आमदार", "खासदार", "मंत्री", "मुख्यमंत्री", "पक्ष", "निवडणूक"],
-  sports: ["क्रीडा", "खेळ", "स्पोर्ट्स", "क्रिकेट", "फुटबॉल", "टेनिस", "सामना", "खेळाडू"],
+  political: ["राजकारण", "राजकीय", "आमदार", "खासदार", "मंत्री", "मुख्यमंत्री", "पक्ष", "निवडणूक", "भाजप", "काँग्रेस", "शिवसेना", "राष्ट्रवादी", "विरोधक", "सत्ताधारी", "विधानसभा", "लोकसभा", "राज्यसभा", "पवार", "ठाकरे", "फडणवीस", "शिंदे", "राऊत"],
+  sports: ["क्रीडा", "खेळ", "स्पोर्ट्स", "क्रिकेट", "फुटबॉल", "टेनिस", "खेळाडू", "आयपीएल", "विश्वचषक", "ऑलिम्पिक"],
   entertainment: ["मनोरंजन", "चित्रपट", "फिल्म", "सिनेमा", "अभिनेता", "अभिनेत्री", "सिरीयल", "गाणे"],
   tourism: ["पर्यटन", "पर्यटक", "टूर", "यात्रा", "सफर", "ठिकाण", "दर्शन", "हिल स्टेशन"],
   lifestyle: ["जीवनशैली", "फॅशन", "स्टाईल", "सौंदर्य", "ब्यूटी", "फिटनेस"],
@@ -114,8 +111,10 @@ const CATEGORY_LABELS = {
 // ---------------- HELPER FUNCTIONS ----------------
 function isProperMarathi(text = "") {
   if (!text) return false;
-  const mr = (text.match(/[\u0900-\u097F]/g) || []).length;
-  return /^[\u0900-\u097F]/.test(text.trim()) && mr / text.length >= 0.6;
+  const devanagariChars = (text.match(/[\u0900-\u097F]/g) || []).length;
+  // At least 10 Devanagari characters and 30%+ Devanagari ratio
+  // (lowered from 60% because Marathi news sites prefix titles with English names/tags)
+  return devanagariChars >= 10 && devanagariChars / text.length >= 0.3;
 }
 
 function containsAllowedTopic(text = "") {
@@ -131,13 +130,32 @@ function cleanTitle(title = "") {
   return title.replace(/ - .*$/, "").replace(/\|.*$/, "").trim();
 }
 
-function detectCategoriesFromText(text = "") {
-  if (!text) return ["general"];
-  const lower = text.toLowerCase();
+function detectCategoriesFromText(title = "", description = "") {
+  if (!title && !description) return ["general"];
+
+  const titleLower = title.toLowerCase();
+  // Location matching uses title + first 200 chars of description (city names are unambiguous)
+  const snippetLower = `${title} ${(description || "").substring(0, 200)}`.toLowerCase();
   const matched = [];
 
-  for (const [cat, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
-    if (keywords.some((kw) => lower.includes(kw.toLowerCase()))) {
+  const locationCategories = [
+    "pune", "mumbai", "nashik", "ahmednagar", "aurangabad", "maharastra",
+  ];
+  const topicCategories = [
+    "desh", "videsh", "political", "sports", "entertainment",
+    "tourism", "lifestyle", "agriculture", "government", "trade", "health", "horoscope",
+  ];
+
+  for (const cat of locationCategories) {
+    const keywords = CATEGORY_KEYWORDS[cat];
+    if (keywords && keywords.some((kw) => snippetLower.includes(kw.toLowerCase()))) {
+      matched.push(cat);
+    }
+  }
+
+  for (const cat of topicCategories) {
+    const keywords = CATEGORY_KEYWORDS[cat];
+    if (keywords && keywords.some((kw) => titleLower.includes(kw.toLowerCase()))) {
       matched.push(cat);
     }
   }
@@ -163,18 +181,37 @@ async function getCollection(collectionName) {
   return mongodb.collection(collectionName);
 }
 
+// Shared Gemini call with retry on 429 rate limits
+async function callGemini(prompt, maxRetries = 3) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
+
+  const ai = new GoogleGenAI({ apiKey });
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+      });
+      return res.text.trim();
+    } catch (error) {
+      const is429 = error.message?.includes("429") || error.message?.includes("RESOURCE_EXHAUSTED");
+      if (is429 && attempt < maxRetries) {
+        const waitSec = Math.pow(2, attempt + 1) + Math.random() * 2;
+        console.log(`  ⏳ Gemini rate limited, waiting ${waitSec.toFixed(1)}s (attempt ${attempt + 1}/${maxRetries})...`);
+        await new Promise((r) => setTimeout(r, waitSec * 1000));
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
 // AI Rewriting function
 async function rewriteMarathiInshortsStyle({ title, summary, source }) {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY not configured");
-    }
-
-    const ai = new GoogleGenAI({ apiKey });
-
-    const prompt = `
-तुम्ही Inshorts-style मराठी न्यूज रायटर आहात.
+    const prompt = `तुम्ही Inshorts-style मराठी न्यूज रायटर आहात.
 
 खालील बातमी 60-80 शब्दांत, लहान, सोपी आणि तथ्यात्मक पद्धतीने पुन्हा लिहा.
 
@@ -184,40 +221,24 @@ async function rewriteMarathiInshortsStyle({ title, summary, source }) {
 - मत मांडू नका
 - साधी, स्पष्ट मराठी
 - फक्त मुख्य तथ्ये
-- शेवटी निष्कर्ष देऊ नका
 
 शीर्षक: ${title}
 स्रोत: ${source}
 सारांश: ${summary}
 
-फक्त पुन्हा लिहिलेली बातमी द्या (60-80 शब्द).
-`;
+फक्त पुन्हा लिहिलेली बातमी द्या (60-80 शब्द).`;
 
-    const res = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-    });
-
-    return res.text.trim();
+    return await callGemini(prompt);
   } catch (error) {
     console.error("Gemini Inshorts rewriting error:", error.message);
-    const shortSummary = summary ? summary.substring(0, 200) + "..." : title;
-    return shortSummary;
+    return summary ? summary.substring(0, 200) + "..." : title;
   }
 }
 
 // Long-form Marathi rewriting (for detailed descriptions)
 async function rewriteMarathiLong({ title, content, source }) {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY not configured");
-    }
-
-    const ai = new GoogleGenAI({ apiKey });
-
-    const prompt = `
-तुम्ही मराठी न्यूज एडिटर आहात.
+    const prompt = `तुम्ही मराठी न्यूज एडिटर आहात.
 
 खालील संपूर्ण बातमी पुन्हा लिहा. मजकूर लांब, तपशीलवार आणि वाचनीय असावा.
 
@@ -236,12 +257,7 @@ ${content}
 
 फक्त पुन्हा लिहिलेली संपूर्ण बातमी द्या.`;
 
-    const res = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-    });
-
-    return res.text.trim();
+    return await callGemini(prompt);
   } catch (error) {
     console.error("Gemini long-form rewriting error:", error.message);
     return content || title;
@@ -250,10 +266,6 @@ ${content}
 
 async function rewriteTitle(originalTitle, content = "") {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return originalTitle;
-
-    const ai = new GoogleGenAI({ apiKey });
     const prompt = `तुम्ही मराठी न्यूज हेडलाइन एडिटर आहात.
 
 खालील बातमीचे शीर्षक पुन्हा लिहा.
@@ -270,12 +282,7 @@ async function rewriteTitle(originalTitle, content = "") {
 
 फक्त नवीन शीर्षक द्या, कोणतेही स्पष्टीकरण किंवा अवतरण चिन्ह नाही.`;
 
-    const res = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-    });
-
-    let newTitle = res.text.trim();
+    let newTitle = await callGemini(prompt);
     newTitle = newTitle.replace(/^["'"""'']+|["'"""'']+$/g, "");
     return newTitle || originalTitle;
   } catch (error) {
@@ -586,32 +593,34 @@ exports.fetchExternalRSS = async (req, res) => {
           const link = item.link || "";
           if (!link) continue;
 
-          if (await isLinkFetched(src.name, link)) {
-            duplicateCount++;
-            continue;
-          }
-
-          // Global dedup: check if link exists in any collection
-          if (await isGlobalDuplicate(link)) {
-            console.log(`  ⏭️  Global duplicate: ${link.substring(0, 60)}...`);
-            duplicateCount++;
-            continue;
-          }
-
           const title = item.title || "";
+          const shortTitle = title.substring(0, 55);
+
+          if (await isLinkFetched(src.name, link)) {
+            console.log(`  ⏭️  [source-dup] ${shortTitle}...`);
+            duplicateCount++;
+            continue;
+          }
+
+          if (await isGlobalDuplicate(link)) {
+            console.log(`  ⏭️  [global-dup] ${shortTitle}...`);
+            duplicateCount++;
+            continue;
+          }
+
           const description = item.description || item.contentSnippet || "";
           const combinedText = `${title} ${description}`;
 
           if (!isProperMarathi(combinedText)) {
+            console.log(`  ⏭️  [not-marathi] ${shortTitle}...`);
             nonMarathiCount++;
             continue;
           }
 
-          // Detect all matching categories from content
-          const detectedCategories = detectCategoriesFromText(combinedText);
+          const detectedCategories = detectCategoriesFromText(title, description);
 
-          // If a specific category was requested, only keep items that actually match
           if (requestedCategory && !detectedCategories.includes(requestedCategory)) {
+            console.log(`  ⏭️  [cat-mismatch] wanted="${requestedCategory}" detected=[${detectedCategories}] title: ${shortTitle}...`);
             categoryMismatchCount++;
             continue;
           }
@@ -634,6 +643,26 @@ exports.fetchExternalRSS = async (req, res) => {
               imageUploaded = true;
             } else {
               console.log(`  ⚠️  Image upload failed: ${imageResult.error}`);
+            }
+          }
+
+          // Fallback: if no image from RSS, fetch from Unsplash/Pexels
+          let stockImageSource = null;
+          if (!r2ImageUrl) {
+            console.log(`  🖼️  No RSS image — searching stock photos for "${detectedCategories[0]}"...`);
+            const stockResult = await getStockImage(detectedCategories);
+            if (stockResult) {
+              const stockUpload = await downloadAndUploadImage(
+                stockResult.url,
+                `stock-${stockResult.source}`
+              );
+              if (stockUpload.success) {
+                r2ImageUrl = stockUpload.url;
+                imageDownloaded = true;
+                imageUploaded = true;
+                stockImageSource = stockResult.source;
+                console.log(`  ✅ Stock image (${stockResult.source}) uploaded: ${r2ImageUrl.substring(0, 60)}...`);
+              }
             }
           }
 
@@ -660,6 +689,7 @@ exports.fetchExternalRSS = async (req, res) => {
             processedAt: null,
             categories: detectedCategories,
             language: "mr",
+            stockImageSource: stockImageSource,
             rawRssData: item,
           };
 

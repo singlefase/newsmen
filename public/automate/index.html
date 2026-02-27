@@ -60,6 +60,30 @@
       box-shadow: 0 4px 12px rgba(63, 81, 181, 0.4);
     }
 
+    .cat-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .copy-btn {
+      border: 1px solid #d9defa;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #3f51b5;
+      font-size: 13px;
+      width: 34px;
+      height: 34px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+
+    .copy-btn:hover { background: #eef1ff; }
+
     .controls {
       display: flex;
       align-items: center;
@@ -91,6 +115,7 @@
 
     .action-btn.green { background: #4caf50; }
     .action-btn.blue { background: #2196f3; }
+    .action-btn.orange { background: #ff9800; }
     .action-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
     .progress-bar {
@@ -169,6 +194,7 @@
       </label>
       <button id="run-btn" class="action-btn green" disabled>Run Selected</button>
       <button id="run-all-btn" class="action-btn blue">Run All Categories</button>
+      <button id="start-generating-btn" class="action-btn orange">Start Generating</button>
     </div>
 
     <div class="progress-bar" id="progress-bar"><div class="fill" id="progress-fill"></div></div>
@@ -180,6 +206,8 @@
 
   <script>
     const API_BASE_URL = window.location.origin;
+    const DEFAULT_RSS_BASE_URL = "https://news.swadeshconnect.com/";
+    let RSS_BASE_URL = DEFAULT_RSS_BASE_URL;
 
     const CATEGORIES = [
       { key: "desh", label: "Desh (देश)" },
@@ -207,6 +235,7 @@
     const logBox = document.getElementById("log-box");
     const runBtn = document.getElementById("run-btn");
     const runAllBtn = document.getElementById("run-all-btn");
+    const startGeneratingBtn = document.getElementById("start-generating-btn");
     const limitInput = document.getElementById("limit-input");
     const rssLinksDiv = document.getElementById("rss-links");
     const progressBar = document.getElementById("progress-bar");
@@ -214,6 +243,10 @@
 
     let selectedCategory = null;
     let isRunning = false;
+    let isAutoGenerating = false;
+    let stopAutoGenerating = false;
+    const AUTOMATION_LIMIT = 6;
+    const AUTOMATION_PAUSE_MS = 20 * 60 * 1000;
 
     function log(message, data) {
       const time = new Date().toLocaleTimeString();
@@ -238,12 +271,55 @@
       isRunning = running;
       runBtn.disabled = running || !selectedCategory;
       runAllBtn.disabled = running;
+      if (!isAutoGenerating) {
+        startGeneratingBtn.textContent = "Start Generating";
+      }
       document.querySelectorAll(".cat-btn").forEach(b => b.style.pointerEvents = running ? "none" : "auto");
+      document.querySelectorAll(".copy-btn").forEach(b => b.disabled = running);
+    }
+
+    function normalizeBaseUrl(url) {
+      if (!url || typeof url !== "string") return DEFAULT_RSS_BASE_URL;
+      const trimmed = url.trim();
+      return trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
+    }
+
+    function getRssUrlByCategory(category) {
+      const base = normalizeBaseUrl(RSS_BASE_URL);
+      return `${base}/api/v1/rss-feed?category=${encodeURIComponent(category)}&limit=20&language=mr`;
+    }
+
+    async function copyText(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    }
+
+    async function waitWithStop(ms) {
+      let remaining = ms;
+      while (remaining > 0 && !stopAutoGenerating) {
+        const step = Math.min(1000, remaining);
+        await new Promise((r) => setTimeout(r, step));
+        remaining -= step;
+      }
     }
 
     function renderCategories() {
       grid.innerHTML = "";
       CATEGORIES.forEach((cat) => {
+        const item = document.createElement("div");
+        item.className = "cat-item";
+
         const btn = document.createElement("button");
         btn.className = "cat-btn";
         btn.textContent = cat.label;
@@ -256,7 +332,26 @@
           runBtn.disabled = false;
           rssLinksDiv.style.display = "none";
         };
-        grid.appendChild(btn);
+
+        const copyBtn = document.createElement("button");
+        copyBtn.className = "copy-btn";
+        copyBtn.type = "button";
+        copyBtn.title = `Copy RSS link for ${cat.label}`;
+        copyBtn.textContent = "📋";
+        copyBtn.onclick = async (e) => {
+          e.stopPropagation();
+          const rssUrl = getRssUrlByCategory(cat.key);
+          try {
+            await copyText(rssUrl);
+            log(`[${cat.key}] RSS link copied`);
+          } catch (err) {
+            log(`[${cat.key}] Copy failed: ${err.message}`);
+          }
+        };
+
+        item.appendChild(btn);
+        item.appendChild(copyBtn);
+        grid.appendChild(item);
       });
     }
 
@@ -321,6 +416,19 @@
       return rssUrl;
     }
 
+    async function loadPublicConfig() {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/public-config`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data?.rssBaseUrl) {
+          RSS_BASE_URL = data.rssBaseUrl;
+        }
+      } catch (_) {
+        // Use default fallback URL silently
+      }
+    }
+
     async function runSelected() {
       if (!selectedCategory || isRunning) return;
       setRunning(true);
@@ -378,9 +486,67 @@
       setTimeout(hideProgress, 1500);
     }
 
-    renderCategories();
-    runBtn.addEventListener("click", runSelected);
-    runAllBtn.addEventListener("click", runAllCategories);
+    async function toggleAutoGenerating() {
+      if (isAutoGenerating) {
+        stopAutoGenerating = true;
+        startGeneratingBtn.disabled = true;
+        log("Automation stop requested. Finishing current task...");
+        return;
+      }
+
+      if (isRunning) return;
+
+      isAutoGenerating = true;
+      stopAutoGenerating = false;
+      startGeneratingBtn.textContent = "Stop Generating";
+      setRunning(true);
+      log("========== AUTO GENERATION STARTED ==========");
+
+      let cycle = 0;
+      try {
+        while (!stopAutoGenerating) {
+          cycle++;
+          log(`========== AUTO CYCLE ${cycle} START ==========`); 
+
+          for (let i = 0; i < CATEGORIES.length; i++) {
+            if (stopAutoGenerating) break;
+            const cat = CATEGORIES[i];
+            setProgress(Math.round(((i) / CATEGORIES.length) * 100));
+            selectedCategorySpan.textContent = `${cat.key} (${i + 1}/${CATEGORIES.length})`;
+            await runPipelineForCategory(cat.key, AUTOMATION_LIMIT);
+          }
+
+          if (stopAutoGenerating) break;
+
+          setProgress(100);
+          selectedCategorySpan.textContent = "waiting";
+          log("========== AUTO CYCLE COMPLETE ==========");
+          log("Waiting 20 minutes before next cycle...");
+          await waitWithStop(AUTOMATION_PAUSE_MS);
+        }
+      } catch (error) {
+        log(`Automation error: ${error.message}`);
+      } finally {
+        isAutoGenerating = false;
+        stopAutoGenerating = false;
+        startGeneratingBtn.disabled = false;
+        startGeneratingBtn.textContent = "Start Generating";
+        selectedCategorySpan.textContent = "none";
+        setRunning(false);
+        setTimeout(hideProgress, 1000);
+        log("========== AUTO GENERATION STOPPED ==========");
+      }
+    }
+
+    async function init() {
+      await loadPublicConfig();
+      renderCategories();
+      runBtn.addEventListener("click", runSelected);
+      runAllBtn.addEventListener("click", runAllCategories);
+      startGeneratingBtn.addEventListener("click", toggleAutoGenerating);
+    }
+
+    init();
   </script>
 </body>
 </html>

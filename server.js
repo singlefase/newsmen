@@ -50,6 +50,20 @@ app.get("/health", (req, res) => {
   });
 });
 
+// Public config for frontend tools (safe values only)
+app.get("/api/public-config", (req, res) => {
+  const rssBaseUrl =
+    process.env.RSS_BASE_URL ||
+    process.env.APP_BASE_URL ||
+    process.env.BASE_URL ||
+    "https://news.swadeshconnect.com/";
+
+  res.json({
+    success: true,
+    rssBaseUrl,
+  });
+});
+
 // V1 API Routes - New 6 APIs
 app.use("/api/v1", v1NewsRoutes);
 

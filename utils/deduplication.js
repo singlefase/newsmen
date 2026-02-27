@@ -1,34 +1,27 @@
 /**
  * Deduplication Helper Functions
- * Track fetched news to avoid duplicates
+ * Uses individual documents per link (not unbounded arrays)
  */
 
 const { connectToDatabase } = require("../config/database");
 
-/**
- * Get RSS fetch log collection
- */
 async function getRssFetchLogCollection() {
   const { mongodb } = await connectToDatabase();
   return mongodb.collection("rss_fetch_log");
 }
 
 /**
- * Check if link has been fetched from a specific source
- * @param {string} sourceName - Source name (e.g., "TV9 Marathi")
- * @param {string} link - News article link
- * @returns {Promise<boolean>} - true if already fetched
+ * Check if link has been fetched from a specific source.
+ * Each (source, link) pair is a separate document for O(1) lookups.
  */
 async function isLinkFetched(sourceName, link) {
   try {
     const collection = await getRssFetchLogCollection();
-    const log = await collection.findOne({ source: sourceName });
-    
-    if (!log || !log.fetchedLinks) {
-      return false;
-    }
-    
-    return log.fetchedLinks.includes(link);
+    const exists = await collection.findOne(
+      { source: sourceName, link: link },
+      { projection: { _id: 1 } }
+    );
+    return !!exists;
   } catch (error) {
     console.error("Error checking fetched link:", error);
     return false;
@@ -37,23 +30,13 @@ async function isLinkFetched(sourceName, link) {
 
 /**
  * Mark link as fetched for a specific source
- * @param {string} sourceName - Source name
- * @param {string} link - News article link
  */
 async function markLinkAsFetched(sourceName, link) {
   try {
     const collection = await getRssFetchLogCollection();
-    
     await collection.updateOne(
-      { source: sourceName },
-      {
-        $set: {
-          source: sourceName,
-          lastFetchedAt: new Date(),
-        },
-        $addToSet: { fetchedLinks: link }, // Add to array if not exists
-        $inc: { totalFetched: 1 },
-      },
+      { source: sourceName, link: link },
+      { $set: { source: sourceName, link: link, fetchedAt: new Date() } },
       { upsert: true }
     );
   } catch (error) {
@@ -62,16 +45,38 @@ async function markLinkAsFetched(sourceName, link) {
 }
 
 /**
+ * Check if a link already exists in unprocessed or processed collections.
+ * Prevents the same story (same URL) from being stored again even from a different source.
+ */
+async function isGlobalDuplicate(link) {
+  try {
+    const { mongodb } = await connectToDatabase();
+    const [inUnprocessed, inProcessed] = await Promise.all([
+      mongodb
+        .collection("unprocessed_news_data")
+        .findOne({ link }, { projection: { _id: 1 } }),
+      mongodb
+        .collection("processed_news_data")
+        .findOne({ link }, { projection: { _id: 1 } }),
+    ]);
+    return !!(inUnprocessed || inProcessed);
+  } catch (error) {
+    console.error("Error checking global duplicate:", error);
+    return false;
+  }
+}
+
+/**
  * Check if news exists in Google News collection (by link)
- * @param {string} link - News article link
- * @returns {Promise<boolean>} - true if exists
  */
 async function googleNewsExists(link) {
   try {
     const { mongodb } = await connectToDatabase();
     const collection = mongodb.collection("google_rss_news_legal");
-    
-    const existing = await collection.findOne({ link: link });
+    const existing = await collection.findOne(
+      { link: link },
+      { projection: { _id: 1 } }
+    );
     return !!existing;
   } catch (error) {
     console.error("Error checking Google News existence:", error);
@@ -79,25 +84,9 @@ async function googleNewsExists(link) {
   }
 }
 
-/**
- * Get all fetched links for a source (for debugging)
- * @param {string} sourceName - Source name
- * @returns {Promise<string[]>} - Array of fetched links
- */
-async function getFetchedLinks(sourceName) {
-  try {
-    const collection = await getRssFetchLogCollection();
-    const log = await collection.findOne({ source: sourceName });
-    return log?.fetchedLinks || [];
-  } catch (error) {
-    console.error("Error getting fetched links:", error);
-    return [];
-  }
-}
-
 module.exports = {
   isLinkFetched,
   markLinkAsFetched,
+  isGlobalDuplicate,
   googleNewsExists,
-  getFetchedLinks,
 };

@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Automate News Pipeline</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
+        Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+      margin: 0;
+      padding: 0;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 1200px;
+      background: #ffffff;
+      border-radius: 18px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+      padding: 24px 28px 30px;
+      margin: 20px;
+    }
+
+    h1 { margin: 0 0 6px; font-size: 24px; color: #222; }
+
+    .subtitle { margin: 0 0 18px; font-size: 14px; color: #666; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .cat-btn {
+      border: none;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      background: #f5f5ff;
+      color: #3f51b5;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      text-align: center;
+    }
+
+    .cat-btn:hover { background: #e0e3ff; }
+
+    .cat-btn.active {
+      background: #3f51b5;
+      color: #ffffff;
+      box-shadow: 0 4px 12px rgba(63, 81, 181, 0.4);
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+
+    .controls input {
+      padding: 7px 10px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      font-size: 13px;
+      width: 90px;
+    }
+
+    .action-btn {
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: none;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      color: #fff;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .action-btn.green { background: #4caf50; }
+    .action-btn.blue { background: #2196f3; }
+    .action-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    .progress-bar {
+      width: 100%;
+      height: 6px;
+      background: #eee;
+      border-radius: 3px;
+      margin-bottom: 10px;
+      overflow: hidden;
+      display: none;
+    }
+
+    .progress-bar .fill {
+      height: 100%;
+      background: linear-gradient(90deg, #4caf50, #66bb6a);
+      border-radius: 3px;
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    .status { font-size: 12px; color: #444; margin-bottom: 6px; }
+    .status span { font-weight: 600; color: #3f51b5; }
+
+    .rss-links {
+      margin: 10px 0;
+      padding: 10px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      font-size: 12px;
+      display: none;
+    }
+
+    .rss-links a {
+      display: inline-block;
+      margin: 3px 6px 3px 0;
+      color: #1565c0;
+      text-decoration: none;
+    }
+
+    .rss-links a:hover { text-decoration: underline; }
+
+    .log {
+      background: #111827;
+      color: #e5e7eb;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-family: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      max-height: 380px;
+      overflow: auto;
+      white-space: pre-wrap;
+    }
+
+    .small { font-size: 11px; color: #666; margin-top: 8px; }
+    a { color: #4cafef; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Automate News Pipeline</h1>
+    <p class="subtitle">
+      Select a category to run <strong>API 3 (Fetch) -> API 4 (Process ALL) -> API 5 (RSS)</strong>
+      or run all categories at once.
+    </p>
+
+    <div class="grid" id="category-grid"></div>
+
+    <div class="controls">
+      <div class="status">
+        Selected: <span id="selected-category">none</span>
+      </div>
+      <label class="small">
+        Limit (API 3):
+        <input type="number" id="limit-input" value="6" min="1" max="50" />
+      </label>
+      <button id="run-btn" class="action-btn green" disabled>Run Selected</button>
+      <button id="run-all-btn" class="action-btn blue">Run All Categories</button>
+    </div>
+
+    <div class="progress-bar" id="progress-bar"><div class="fill" id="progress-fill"></div></div>
+
+    <div class="rss-links" id="rss-links"></div>
+
+    <div class="log" id="log-box">Select a category and click "Run Selected", or click "Run All Categories".</div>
+  </div>
+
+  <script>
+    const API_BASE_URL = window.location.origin;
+
+    const CATEGORIES = [
+      { key: "desh", label: "Desh (देश)" },
+      { key: "videsh", label: "Videsh (विदेश)" },
+      { key: "maharastra", label: "Maharastra (महाराष्ट्र)" },
+      { key: "pune", label: "Pune (पुणे)" },
+      { key: "mumbai", label: "Mumbai (मुंबई)" },
+      { key: "nashik", label: "Nashik (नाशिक)" },
+      { key: "ahmednagar", label: "Ahmednagar (अहमदनगर)" },
+      { key: "aurangabad", label: "Aurangabad (औरंगाबाद)" },
+      { key: "political", label: "Political (राजकारण)" },
+      { key: "sports", label: "Sports (क्रीडा)" },
+      { key: "entertainment", label: "Entertainment (मनोरंजन)" },
+      { key: "tourism", label: "Tourism (पर्यटन)" },
+      { key: "lifestyle", label: "Lifestyle (जीवनशैली)" },
+      { key: "agriculture", label: "Agriculture (शेती)" },
+      { key: "government", label: "Government (सरकार)" },
+      { key: "trade", label: "Trade (व्यापार)" },
+      { key: "health", label: "Health (आरोग्य)" },
+      { key: "horoscope", label: "Horoscope (भविष्य)" }
+    ];
+
+    const grid = document.getElementById("category-grid");
+    const selectedCategorySpan = document.getElementById("selected-category");
+    const logBox = document.getElementById("log-box");
+    const runBtn = document.getElementById("run-btn");
+    const runAllBtn = document.getElementById("run-all-btn");
+    const limitInput = document.getElementById("limit-input");
+    const rssLinksDiv = document.getElementById("rss-links");
+    const progressBar = document.getElementById("progress-bar");
+    const progressFill = document.getElementById("progress-fill");
+
+    let selectedCategory = null;
+    let isRunning = false;
+
+    function log(message, data) {
+      const time = new Date().toLocaleTimeString();
+      let line = `[${time}] ${message}`;
+      if (data !== undefined) {
+        try { line += " " + JSON.stringify(data, null, 2); } catch {}
+      }
+      logBox.textContent = line + "\n" + logBox.textContent;
+    }
+
+    function setProgress(pct) {
+      progressBar.style.display = "block";
+      progressFill.style.width = pct + "%";
+    }
+
+    function hideProgress() {
+      progressBar.style.display = "none";
+      progressFill.style.width = "0%";
+    }
+
+    function setRunning(running) {
+      isRunning = running;
+      runBtn.disabled = running || !selectedCategory;
+      runAllBtn.disabled = running;
+      document.querySelectorAll(".cat-btn").forEach(b => b.style.pointerEvents = running ? "none" : "auto");
+    }
+
+    function renderCategories() {
+      grid.innerHTML = "";
+      CATEGORIES.forEach((cat) => {
+        const btn = document.createElement("button");
+        btn.className = "cat-btn";
+        btn.textContent = cat.label;
+        btn.onclick = () => {
+          if (isRunning) return;
+          selectedCategory = cat.key;
+          selectedCategorySpan.textContent = cat.key;
+          document.querySelectorAll(".cat-btn").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          runBtn.disabled = false;
+          rssLinksDiv.style.display = "none";
+        };
+        grid.appendChild(btn);
+      });
+    }
+
+    /**
+     * Run the full pipeline for a single category:
+     * 1) API 3: Fetch RSS items for this category
+     * 2) API 4: Process ALL fetched items (loop until none remain)
+     * 3) Return the RSS feed URL
+     */
+    async function runPipelineForCategory(category, limit) {
+      log(`--- Pipeline START: "${category}" (limit=${limit}) ---`);
+
+      // Step 1: API 3 - Fetch
+      log(`[${category}] Calling API 3 (fetch-external-rss)...`);
+      const res3 = await fetch(`${API_BASE_URL}/api/v1/fetch-external-rss`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limit, category })
+      });
+      const data3 = await res3.json();
+      if (!res3.ok) {
+        log(`[${category}] API 3 FAILED`, data3);
+        return null;
+      }
+      log(`[${category}] API 3 done: ${data3.count} fetched, ${data3.categoryMismatchSkipped || 0} category mismatch, ${data3.nonMarathiSkipped || 0} non-Marathi, ${data3.duplicatesSkipped || 0} duplicates`);
+
+      if (data3.count === 0) {
+        log(`[${category}] No new items fetched for this category. RSS feed may already have prior items.`);
+      }
+
+      // Step 2: API 4 - Process ALL items in a loop
+      let processedCount = 0;
+      let hasMore = true;
+      while (hasMore) {
+        log(`[${category}] Calling API 4 (process-news) - item ${processedCount + 1}...`);
+        const res4 = await fetch(`${API_BASE_URL}/api/v1/process-news`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ category })
+        });
+        const data4 = await res4.json();
+        if (!res4.ok) {
+          log(`[${category}] API 4 FAILED`, data4);
+          break;
+        }
+        if (data4.processed) {
+          processedCount++;
+          log(`[${category}] Processed ${processedCount}: "${(data4.news?.title || "").substring(0, 50)}..." (${data4.remaining} remaining)`);
+        } else {
+          hasMore = false;
+        }
+      }
+      log(`[${category}] Total processed: ${processedCount} items`);
+
+      // Step 3: RSS feed URL
+      const rssUrl = `${API_BASE_URL}/api/v1/rss-feed?category=${encodeURIComponent(category)}&limit=20&language=mr`;
+      log(`[${category}] RSS Feed: ${rssUrl}`);
+      log(`--- Pipeline END: "${category}" ---`);
+      return rssUrl;
+    }
+
+    async function runSelected() {
+      if (!selectedCategory || isRunning) return;
+      setRunning(true);
+      const limit = parseInt(limitInput.value, 10) || 6;
+      setProgress(10);
+
+      try {
+        const rssUrl = await runPipelineForCategory(selectedCategory, limit);
+        setProgress(100);
+        if (rssUrl) {
+          rssLinksDiv.innerHTML = `<strong>RSS Feed:</strong> <a href="${rssUrl}" target="_blank">${rssUrl}</a>`;
+          rssLinksDiv.style.display = "block";
+        }
+      } catch (error) {
+        log("Pipeline error", { error: error.message });
+      } finally {
+        setRunning(false);
+        setTimeout(hideProgress, 1000);
+      }
+    }
+
+    async function runAllCategories() {
+      if (isRunning) return;
+      setRunning(true);
+      const limit = parseInt(limitInput.value, 10) || 6;
+      const total = CATEGORIES.length;
+      const rssUrls = [];
+
+      log("========== RUNNING ALL CATEGORIES ==========");
+
+      for (let i = 0; i < total; i++) {
+        const cat = CATEGORIES[i];
+        setProgress(Math.round(((i) / total) * 100));
+        selectedCategorySpan.textContent = `${cat.key} (${i + 1}/${total})`;
+
+        try {
+          const rssUrl = await runPipelineForCategory(cat.key, limit);
+          if (rssUrl) rssUrls.push({ key: cat.key, label: cat.label, url: rssUrl });
+        } catch (error) {
+          log(`[${cat.key}] ERROR: ${error.message}`);
+        }
+      }
+
+      setProgress(100);
+      log("========== ALL CATEGORIES COMPLETE ==========");
+
+      if (rssUrls.length > 0) {
+        rssLinksDiv.innerHTML = "<strong>All RSS Feeds:</strong><br>" +
+          rssUrls.map(r => `<a href="${r.url}" target="_blank">${r.label}</a>`).join(" | ");
+        rssLinksDiv.style.display = "block";
+      }
+
+      selectedCategorySpan.textContent = "done";
+      setRunning(false);
+      setTimeout(hideProgress, 1500);
+    }
+
+    renderCategories();
+    runBtn.addEventListener("click", runSelected);
+    runAllBtn.addEventListener("click", runAllCategories);
+  </script>
+</body>
+</html>

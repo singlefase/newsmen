@@ -4,6 +4,15 @@
 
 This document outlines a 6-API news aggregation system that processes news from multiple RSS sources, rewrites content using AI, and serves it through various endpoints while maintaining legal compliance.
 
+**⚠️ UPDATED REQUIREMENTS:**
+- **Marathi News Only** - All content must be in Marathi
+- **Full Content** - Keep full articles (not 60-80 word summaries)
+- **Title Rewriting** - Improve and rewrite titles
+- **Multi-Category Support** - 19 fixed categories, news can belong to multiple categories
+- **Efficient Category Queries** - Support single and multiple category filtering
+
+See `API_3_4_5_ISSUES_ANALYSIS.md` for detailed issues and `CATEGORY_KEYWORDS_MAPPING.md` for category details.
+
 ---
 
 ## System Architecture

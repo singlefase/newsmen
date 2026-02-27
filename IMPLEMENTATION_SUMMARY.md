@@ -4,6 +4,14 @@
 
 All 6 new APIs + getRealRSS have been successfully implemented. Old APIs have been removed.
 
+**⚠️ IMPORTANT:** APIs 3, 4, 5 need updates for:
+- Multi-category support (19 fixed categories)
+- Full content rewriting (not 60-80 words)
+- Title rewriting
+- Marathi-only filtering
+
+See `API_3_4_5_ISSUES_ANALYSIS.md` for detailed issues and requirements.
+
 ---
 
 ## 📋 Implemented APIs
@@ -108,11 +116,15 @@ All 6 new APIs + getRealRSS have been successfully implemented. Old APIs have be
 
 ### 2. `unprocessed_news_data`
 - Stores external RSS news with downloaded images
+- **TODO:** Add `categories` array and `primaryCategory` fields for multi-category support
 - Indexes: `processed + fetchedAt`, `sourceName`, `link`, `publishedAt`
+- **TODO:** Add index on `categories` array for efficient queries
 
 ### 3. `processed_news_data`
 - Stores AI-rewritten news
+- **TODO:** Add `categories` array, `primaryCategory`, `originalTitle`, `rewrittenTitle`, `originalFullContent`, `rewrittenFullContent` fields
 - Indexes: `publishedAt`, `category`, `language`, `sourceName`, text search
+- **TODO:** Change `category` (single) to `categories` (array), add indexes for multi-category queries
 
 ### 4. `rss_fetch_log`
 - Tracks fetched links per source
@@ -255,5 +267,60 @@ See `ARCHITECTURE_PROPOSAL.md` for detailed architecture documentation.
 
 ---
 
+---
+
+## 📋 FIXED CATEGORIES (19 Categories - Multi-Category Support)
+
+Each news can belong to **one or more categories**. Categories are stored as an array for efficient querying.
+
+### Location Categories (8):
+1. **desh** (देश) - National
+2. **videsh** (विदेश) - International
+3. **maharastra** (महाराष्ट्र) - Maharashtra
+4. **pune** (पुणे) - Pune
+5. **mumbai** (मुंबई) - Mumbai
+6. **nashik** (नाशिक) - Nashik
+7. **ahmednagar** (अहमदनगर/अहिल्यानगर) - Ahmednagar
+8. **aurangabad** (औरंगाबाद/संभाजीनगर) - Aurangabad
+
+### Topic Categories (11):
+9. **political** (राजकारण) - Politics
+10. **sports** (क्रीडा) - Sports
+11. **entertainment** (मनोरंजन) - Entertainment
+12. **tourism** (पर्यटन) - Tourism
+13. **lifestyle** (जीवनशैली) - Lifestyle
+14. **agriculture** (शेती) - Agriculture
+15. **government** (सरकार) - Government
+16. **trade** (व्यापार) - Trade
+17. **health** (आरोग्य) - Health
+18. **horoscope** (भविष्य) - Horoscope
+
+### Multi-Category Examples:
+- Pune political news → `categories: ["pune", "political", "maharastra"]`
+- Maharashtra sports news → `categories: ["sports", "maharastra"]`
+- Mumbai entertainment → `categories: ["mumbai", "entertainment", "maharastra"]`
+
+### Query Support:
+- Single: `/api/v1/rss-feed?category=sports`
+- Multiple (OR): `/api/v1/rss-feed?categories=sports,political` (news in either)
+- Multiple (AND): `/api/v1/rss-feed?categories=sports+political` (news in both)
+
+See `CATEGORY_KEYWORDS_MAPPING.md` for keyword mapping and detection logic.
+
+---
+
+## ⚠️ PENDING UPDATES FOR APIs 3, 4, 5
+
+See `API_3_4_5_ISSUES_ANALYSIS.md` for detailed issues:
+
+1. **Content Shortening** - Currently 60-80 words, needs full content
+2. **Title Rewriting** - Currently not happening
+3. **Marathi Filtering** - Needs implementation
+4. **Multi-Category Support** - Needs implementation
+5. **Category-Specific RSS Feeds** - Needs implementation
+
+---
+
 **Implementation Date**: 2026-02-12  
-**Status**: ✅ Complete
+**Last Updated**: 2026-02-12  
+**Status**: ✅ Complete (APIs 3,4,5 need updates - see issues analysis)

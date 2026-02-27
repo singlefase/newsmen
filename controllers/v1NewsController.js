@@ -15,6 +15,7 @@ const {
   isLinkFetched,
   markLinkAsFetched,
   googleNewsExists,
+  isGlobalDuplicate,
 } = require("../utils/deduplication");
 const {
   escapeXml,
@@ -67,6 +68,49 @@ const RSS_SOURCES = [
   },
 ];
 
+const CATEGORY_KEYWORDS = {
+  desh: ["देश", "भारत", "राष्ट्रीय"],
+  videsh: ["विदेश", "परदेश", "आंतरराष्ट्रीय", "जागतिक"],
+  maharastra: ["महाराष्ट्र", "मराठवाडा", "कोकण"],
+  pune: ["पुणे", "पुण्यात", "पुण्याचा", "पुण्यातील"],
+  mumbai: ["मुंबई", "मुंबईत", "मुंबईचा", "मुंबईतील", "बॉम्बे"],
+  nashik: ["नाशिक", "नाशिकात", "नाशिकचा", "नाशिकतील"],
+  ahmednagar: ["अहमदनगर", "अहिल्यानगर"],
+  aurangabad: ["औरंगाबाद", "संभाजीनगर"],
+  political: ["राजकारण", "राजकीय", "आमदार", "खासदार", "मंत्री", "मुख्यमंत्री", "पक्ष", "निवडणूक"],
+  sports: ["क्रीडा", "खेळ", "स्पोर्ट्स", "क्रिकेट", "फुटबॉल", "टेनिस", "सामना", "खेळाडू"],
+  entertainment: ["मनोरंजन", "चित्रपट", "फिल्म", "सिनेमा", "अभिनेता", "अभिनेत्री", "सिरीयल", "गाणे"],
+  tourism: ["पर्यटन", "पर्यटक", "टूर", "यात्रा", "सफर", "ठिकाण", "दर्शन", "हिल स्टेशन"],
+  lifestyle: ["जीवनशैली", "फॅशन", "स्टाईल", "सौंदर्य", "ब्यूटी", "फिटनेस"],
+  agriculture: ["शेती", "शेतकरी", "पिक", "धान्य", "कृषी", "खते", "सिंचन"],
+  government: ["सरकार", "सरकारी", "प्रशासन", "पालिका", "महापालिका", "योजना", "निर्णय"],
+  trade: ["व्यापार", "व्यवसाय", "बाजार", "कंपनी", "उद्योग", "व्यापारी"],
+  health: ["आरोग्य", "रुग्णालय", "डॉक्टर", "औषध", "उपचार", "रोग", "आजार"],
+  horoscope: ["भविष्य", "राशी", "ज्योतिष", "राशिभविष्य", "कुंडली"],
+};
+
+const CATEGORY_LABELS = {
+  desh: { title: "देश बातम्या", description: "भारतातील ताज्या बातम्या" },
+  videsh: { title: "विदेश बातम्या", description: "आंतरराष्ट्रीय ताज्या बातम्या" },
+  maharastra: { title: "महाराष्ट्र बातम्या", description: "महाराष्ट्रातील ताज्या बातम्या" },
+  pune: { title: "पुणे बातम्या", description: "पुण्यातील ताज्या बातम्या" },
+  mumbai: { title: "मुंबई बातम्या", description: "मुंबईतील ताज्या बातम्या" },
+  nashik: { title: "नाशिक बातम्या", description: "नाशिकातील ताज्या बातम्या" },
+  ahmednagar: { title: "अहमदनगर बातम्या", description: "अहमदनगरातील ताज्या बातम्या" },
+  aurangabad: { title: "संभाजीनगर बातम्या", description: "संभाजीनगरातील ताज्या बातम्या" },
+  political: { title: "राजकारण बातम्या", description: "राजकीय ताज्या बातम्या" },
+  sports: { title: "क्रीडा बातम्या", description: "खेळाच्या ताज्या बातम्या" },
+  entertainment: { title: "मनोरंजन बातम्या", description: "मनोरंजन क्षेत्रातील ताज्या बातम्या" },
+  tourism: { title: "पर्यटन बातम्या", description: "पर्यटन क्षेत्रातील ताज्या बातम्या" },
+  lifestyle: { title: "जीवनशैली", description: "जीवनशैलीशी संबंधित ताज्या बातम्या" },
+  agriculture: { title: "कृषी बातम्या", description: "शेती आणि कृषी क्षेत्रातील ताज्या बातम्या" },
+  government: { title: "सरकारी बातम्या", description: "सरकारी निर्णय आणि योजनांच्या बातम्या" },
+  trade: { title: "व्यापार बातम्या", description: "व्यापार आणि उद्योग क्षेत्रातील ताज्या बातम्या" },
+  health: { title: "आरोग्य बातम्या", description: "आरोग्य क्षेत्रातील ताज्या बातम्या" },
+  horoscope: { title: "राशिभविष्य", description: "आजचे राशिभविष्य" },
+  general: { title: "ताज्या बातम्या", description: "सर्व ताज्या मराठी बातम्या" },
+};
+
 // ---------------- HELPER FUNCTIONS ----------------
 function isProperMarathi(text = "") {
   if (!text) return false;
@@ -85,6 +129,32 @@ function containsBlockedTopic(text = "") {
 
 function cleanTitle(title = "") {
   return title.replace(/ - .*$/, "").replace(/\|.*$/, "").trim();
+}
+
+function detectCategoriesFromText(text = "") {
+  if (!text) return ["general"];
+  const lower = text.toLowerCase();
+  const matched = [];
+
+  for (const [cat, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
+    if (keywords.some((kw) => lower.includes(kw.toLowerCase()))) {
+      matched.push(cat);
+    }
+  }
+
+  return matched.length > 0 ? matched : ["general"];
+}
+
+function stripHtml(html = "") {
+  return html
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 // Get collection helper
@@ -133,6 +203,84 @@ async function rewriteMarathiInshortsStyle({ title, summary, source }) {
     console.error("Gemini Inshorts rewriting error:", error.message);
     const shortSummary = summary ? summary.substring(0, 200) + "..." : title;
     return shortSummary;
+  }
+}
+
+// Long-form Marathi rewriting (for detailed descriptions)
+async function rewriteMarathiLong({ title, content, source }) {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY not configured");
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+
+    const prompt = `
+तुम्ही मराठी न्यूज एडिटर आहात.
+
+खालील संपूर्ण बातमी पुन्हा लिहा. मजकूर लांब, तपशीलवार आणि वाचनीय असावा.
+
+नियम:
+- मूळ मजकूर कॉपी करू नका - पूर्णपणे मूळ लिहा
+- संपूर्ण बातमी पुन्हा लिहा (सारांश नाही)
+- मूळ लांबी जवळजवळ कायम ठेवा किंवा थोडी वाढवा
+- सर्व महत्त्वाची माहिती, पार्श्वभूमी आणि संदर्भ समाविष्ट करा
+- साधी, स्पष्ट आणि प्रवाही मराठी वापरा
+- मत मांडू नका, फक्त तथ्यांवर लक्ष द्या
+
+शीर्षक: ${title}
+स्रोत: ${source}
+मूळ बातमी:
+${content}
+
+फक्त पुन्हा लिहिलेली संपूर्ण बातमी द्या.`;
+
+    const res = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+    });
+
+    return res.text.trim();
+  } catch (error) {
+    console.error("Gemini long-form rewriting error:", error.message);
+    return content || title;
+  }
+}
+
+async function rewriteTitle(originalTitle, content = "") {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return originalTitle;
+
+    const ai = new GoogleGenAI({ apiKey });
+    const prompt = `तुम्ही मराठी न्यूज हेडलाइन एडिटर आहात.
+
+खालील बातमीचे शीर्षक पुन्हा लिहा.
+
+नियम:
+- मूळ शीर्षक कॉपी करू नका - पूर्णपणे नवीन लिहा
+- 10-15 शब्दांत ठेवा
+- मुख्य माहिती समाविष्ट करा
+- आकर्षक पण क्लिकबेट नसलेले
+- साधी स्पष्ट मराठी
+
+मूळ शीर्षक: ${originalTitle}
+बातमी सारांश: ${(content || "").substring(0, 300)}
+
+फक्त नवीन शीर्षक द्या, कोणतेही स्पष्टीकरण किंवा अवतरण चिन्ह नाही.`;
+
+    const res = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+    });
+
+    let newTitle = res.text.trim();
+    newTitle = newTitle.replace(/^["'"""'']+|["'"""'']+$/g, "");
+    return newTitle || originalTitle;
+  } catch (error) {
+    console.error("Title rewriting error:", error.message);
+    return originalTitle;
   }
 }
 
@@ -398,7 +546,7 @@ exports.getGoogleNews = async (req, res) => {
 exports.fetchExternalRSS = async (req, res) => {
   try {
     console.log("\n🚀 [API 3] Fetching External RSS with Image Download...");
-    const { source, limit = 6 } = req.body;
+    const { source, limit = 6, category: requestedCategory } = req.body;
 
     const sourcesToFetch = source
       ? RSS_SOURCES.filter((s) =>
@@ -406,14 +554,21 @@ exports.fetchExternalRSS = async (req, res) => {
         )
       : RSS_SOURCES;
 
-    console.log(`📰 Fetching from ${sourcesToFetch.length} sources...`);
+    const perSourceLimit = Math.ceil(limit / sourcesToFetch.length);
+    console.log(`📰 Fetching from ${sourcesToFetch.length} sources (${perSourceLimit} per source, ${limit} total)...`);
+    if (requestedCategory) {
+      console.log(`🏷️  Filtering for category: ${requestedCategory}`);
+    }
 
     const allItems = [];
     let fetchedCount = 0;
+    let nonMarathiCount = 0;
+    let categoryMismatchCount = 0;
+    let duplicateCount = 0;
 
-    // Fetch from each source
     for (const src of sourcesToFetch) {
       if (fetchedCount >= limit) break;
+      let sourceCount = 0;
 
       try {
         console.log(`  📡 Fetching: ${src.name} - ${src.url}`);
@@ -424,28 +579,50 @@ exports.fetchExternalRSS = async (req, res) => {
           continue;
         }
 
-        // Process items from this source
         for (const item of feed.items) {
           if (fetchedCount >= limit) break;
+          if (sourceCount >= perSourceLimit) break;
 
           const link = item.link || "";
           if (!link) continue;
 
-          // Check if already fetched from this source
           if (await isLinkFetched(src.name, link)) {
-            console.log(`  ⏭️  Already fetched from ${src.name}: ${link.substring(0, 50)}...`);
+            duplicateCount++;
             continue;
           }
 
-          // Extract image URL
+          // Global dedup: check if link exists in any collection
+          if (await isGlobalDuplicate(link)) {
+            console.log(`  ⏭️  Global duplicate: ${link.substring(0, 60)}...`);
+            duplicateCount++;
+            continue;
+          }
+
+          const title = item.title || "";
+          const description = item.description || item.contentSnippet || "";
+          const combinedText = `${title} ${description}`;
+
+          if (!isProperMarathi(combinedText)) {
+            nonMarathiCount++;
+            continue;
+          }
+
+          // Detect all matching categories from content
+          const detectedCategories = detectCategoriesFromText(combinedText);
+
+          // If a specific category was requested, only keep items that actually match
+          if (requestedCategory && !detectedCategories.includes(requestedCategory)) {
+            categoryMismatchCount++;
+            continue;
+          }
+
           const originalImageUrl = extractImageUrlFromRSSItem(item);
           let r2ImageUrl = null;
           let imageDownloaded = false;
           let imageUploaded = false;
 
-          // Download and upload image if available
           if (originalImageUrl) {
-            console.log(`  📸 Processing image for: ${item.title?.substring(0, 50)}...`);
+            console.log(`  📸 Processing image for: ${title.substring(0, 50)}...`);
             const imageResult = await downloadAndUploadImage(
               originalImageUrl,
               src.name.replace(/\s+/g, "-").toLowerCase()
@@ -460,14 +637,13 @@ exports.fetchExternalRSS = async (req, res) => {
             }
           }
 
-          // Create news article object
           const newsArticle = {
             sourceName: src.name,
             sourceUrl: src.url,
-            title: item.title || "",
+            title: title,
             link: link,
             guid: item.guid || link,
-            description: item.description || "",
+            description: description,
             content: item["content:encoded"] || item.content || "",
             contentSnippet: item.contentSnippet || "",
             pubDate: item.pubDate || "",
@@ -482,19 +658,27 @@ exports.fetchExternalRSS = async (req, res) => {
             fetchedAt: new Date(),
             processed: false,
             processedAt: null,
-            rawRssData: item, // Store complete RSS item
+            categories: detectedCategories,
+            language: "mr",
+            rawRssData: item,
           };
 
-          // Save to database
-          const collection = await getCollection("unprocessed_news_data");
-          await collection.insertOne(newsArticle);
-
-          // Mark as fetched
-          await markLinkAsFetched(src.name, link);
-
-          allItems.push(newsArticle);
-          fetchedCount++;
-          console.log(`  ✅ Saved: ${item.title?.substring(0, 50)}...`);
+          try {
+            const collection = await getCollection("unprocessed_news_data");
+            await collection.insertOne(newsArticle);
+            await markLinkAsFetched(src.name, link);
+            allItems.push(newsArticle);
+            fetchedCount++;
+            sourceCount++;
+            console.log(`  ✅ [${src.name}] Saved (${detectedCategories.join(",")}): ${title.substring(0, 50)}...`);
+          } catch (dbError) {
+            if (dbError.code === 11000) {
+              duplicateCount++;
+              console.log(`  ⏭️  Duplicate key skipped: ${title.substring(0, 50)}...`);
+            } else {
+              console.error(`  ❌ DB insert error: ${dbError.message}`);
+            }
+          }
         }
       } catch (error) {
         console.error(`  ❌ Error fetching ${src.name}:`, error.message);
@@ -502,17 +686,21 @@ exports.fetchExternalRSS = async (req, res) => {
       }
     }
 
-    console.log(`\n✅ Fetched ${fetchedCount} news items with images\n`);
+    console.log(`\n✅ Fetched ${fetchedCount} | Skipped: ${nonMarathiCount} non-Marathi, ${categoryMismatchCount} category mismatch, ${duplicateCount} duplicates\n`);
 
     return res.status(200).json({
       success: true,
       message: `Successfully fetched ${fetchedCount} news items`,
       count: fetchedCount,
+      nonMarathiSkipped: nonMarathiCount,
+      categoryMismatchSkipped: categoryMismatchCount,
+      duplicatesSkipped: duplicateCount,
       news: allItems.map((item) => ({
         id: item._id?.toString(),
         title: item.title,
         source: item.sourceName,
         link: item.link,
+        categories: item.categories,
         imageUrl: item.r2ImageUrl || item.originalImageUrl,
       })),
     });
@@ -531,56 +719,79 @@ exports.processNews = async (req, res) => {
   try {
     console.log("\n🚀 [API 4] Processing news with AI...");
 
+    const { category: requestedCategory } = req.body || {};
+
     const collection = await getCollection("unprocessed_news_data");
     const processedCollection = await getCollection("processed_news_data");
 
-    // Fetch one unprocessed news (oldest first)
-    const unprocessedNews = await collection
-      .findOne(
-        { processed: false },
-        { sort: { fetchedAt: 1 } } // Oldest first
-      );
+    const baseQuery = { processed: false };
+    if (requestedCategory) {
+      baseQuery.categories = requestedCategory;
+    }
+
+    const unprocessedNews = await collection.findOne(baseQuery, {
+      sort: { fetchedAt: 1 },
+    });
 
     if (!unprocessedNews) {
+      const remaining = await collection.countDocuments(baseQuery);
       console.log("  ℹ️  No unprocessed news found");
       return res.status(200).json({
         success: true,
         message: "No unprocessed news to process",
         processed: false,
+        remaining: remaining,
       });
     }
 
     console.log(`  📰 Processing: ${unprocessedNews.title?.substring(0, 50)}...`);
 
-    // Rewrite with AI
+    // Strip HTML before sending to AI
+    const rawContent =
+      unprocessedNews.content ||
+      unprocessedNews.description ||
+      unprocessedNews.contentSnippet ||
+      "";
+    const cleanContent = stripHtml(rawContent);
+
+    // Rewrite description with AI (long, detailed)
     let rewrittenDescription;
     try {
-      rewrittenDescription = await rewriteMarathiInshortsStyle({
+      rewrittenDescription = await rewriteMarathiLong({
         title: unprocessedNews.title,
-        summary: unprocessedNews.description || unprocessedNews.contentSnippet || "",
+        content: cleanContent,
         source: unprocessedNews.sourceName,
       });
-      console.log(`  ✅ AI rewritten (${rewrittenDescription.length} chars)`);
+      console.log(`  ✅ AI description rewritten (${rewrittenDescription.length} chars)`);
     } catch (aiError) {
-      console.error(`  ⚠️  AI rewriting failed: ${aiError.message}`);
-      // Use shortened original as fallback
-      rewrittenDescription =
-        unprocessedNews.description?.substring(0, 200) + "..." ||
-        unprocessedNews.contentSnippet?.substring(0, 200) + "..." ||
-        unprocessedNews.title;
+      console.error(`  ⚠️  AI description rewriting failed: ${aiError.message}`);
+      rewrittenDescription = cleanContent.substring(0, 500) + "..." || unprocessedNews.title;
     }
 
-    // Create processed news article
+    // Rewrite title with AI
+    let rewrittenTitle;
+    try {
+      rewrittenTitle = await rewriteTitle(unprocessedNews.title, cleanContent);
+      console.log(`  ✅ AI title rewritten: ${rewrittenTitle.substring(0, 60)}...`);
+    } catch (titleError) {
+      console.error(`  ⚠️  Title rewriting failed: ${titleError.message}`);
+      rewrittenTitle = unprocessedNews.title;
+    }
+
+    // Image: prefer R2, fall back to original
+    const imageUrl = unprocessedNews.r2ImageUrl || unprocessedNews.originalImageUrl || null;
+
     const processedNews = {
       sourceName: unprocessedNews.sourceName,
       sourceUrl: unprocessedNews.sourceUrl,
-      title: unprocessedNews.title,
+      title: rewrittenTitle,
+      originalTitle: unprocessedNews.title,
       rewrittenDescription: rewrittenDescription,
       originalDescription:
         unprocessedNews.description || unprocessedNews.contentSnippet || "",
       link: unprocessedNews.link,
       guid: unprocessedNews.guid,
-      imageUrl: unprocessedNews.r2ImageUrl || null, // Use R2 URL
+      imageUrl: imageUrl,
       originalImageUrl: unprocessedNews.originalImageUrl,
       pubDate: unprocessedNews.pubDate,
       publishedAt: unprocessedNews.publishedAt,
@@ -588,40 +799,40 @@ exports.processNews = async (req, res) => {
       mediaContent: unprocessedNews.mediaContent,
       mediaThumbnail: unprocessedNews.mediaThumbnail,
       enclosure: unprocessedNews.enclosure,
-      language: "mr", // Default to Marathi
-      category: "general", // Default category
+      language: unprocessedNews.language || "mr",
+      categories: unprocessedNews.categories || ["general"],
       originalSource: unprocessedNews.sourceName,
       originalLink: unprocessedNews.link,
       isRewritten: true,
+      isTitleRewritten: rewrittenTitle !== unprocessedNews.title,
       disclaimer:
         "This is a summary of publicly available news. Content rewritten for clarity. Click source link for full article.",
       unprocessedNewsId: unprocessedNews._id,
     };
 
-    // Save to processed collection
     await processedCollection.insertOne(processedNews);
 
-    // Mark as processed
     await collection.updateOne(
       { _id: unprocessedNews._id },
-      {
-        $set: {
-          processed: true,
-          processedAt: new Date(),
-        },
-      }
+      { $set: { processed: true, processedAt: new Date() } }
     );
 
-    console.log(`  💾 Saved to processed_news_data\n`);
+    // Count remaining unprocessed for this query
+    const remaining = await collection.countDocuments(baseQuery);
+
+    console.log(`  💾 Saved to processed_news_data (${remaining} remaining)\n`);
 
     return res.status(200).json({
       success: true,
       message: "News processed successfully",
       processed: true,
+      remaining: remaining,
       news: {
         id: processedNews._id?.toString(),
         title: processedNews.title,
-        description: processedNews.rewrittenDescription,
+        originalTitle: processedNews.originalTitle,
+        description: processedNews.rewrittenDescription?.substring(0, 200) + "...",
+        categories: processedNews.categories,
         imageUrl: processedNews.imageUrl,
       },
     });
@@ -642,7 +853,7 @@ exports.generateRSSFeed = async (req, res) => {
 
     const collection = await getCollection("processed_news_data");
     const query = {};
-    if (category) query.category = category;
+    if (category) query.categories = category;
     if (language) query.language = language;
     if (source) query.sourceName = source;
 
@@ -655,20 +866,18 @@ exports.generateRSSFeed = async (req, res) => {
     const baseUrl = getBaseUrl(req);
     const rssUrl = `${baseUrl}${req.originalUrl}`;
 
-    const channelTitle = "News Feed";
-    const channelDescription = "Latest news feed";
+    const catLabel = CATEGORY_LABELS[category] || CATEGORY_LABELS.general;
+    const channelTitle = catLabel.title;
+    const channelDescription = catLabel.description;
     const channelLink = `${baseUrl}/api/v1/rss-feed`;
 
-    // Build RSS XML (matching Divya Marathi format exactly)
     let rssXml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss xmlns:media="http://search.yahoo.com/mrss/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
 <channel>
 <title><![CDATA[${channelTitle}]]></title>
 <link>${escapeXml(channelLink)}</link>
 <atom:link href="${escapeXml(rssUrl)}" rel="self" type="application/rss+xml"/>
-<description>
-<![CDATA[${channelDescription}]]>
-</description>
+<description><![CDATA[${channelDescription}]]></description>
 <language>${language}</language>
 <lastBuildDate>${formatRFC822Date(new Date())}</lastBuildDate>
 <pubDate>${formatRFC822Date(new Date())}</pubDate>
@@ -679,7 +888,6 @@ exports.generateRSSFeed = async (req, res) => {
 </image>
 `;
 
-    // Add items
     for (const item of newsItems) {
       const title = (item.title || "").trim();
       const link = item.link || `${baseUrl}/news/${item._id}`;
@@ -702,19 +910,23 @@ exports.generateRSSFeed = async (req, res) => {
         : formatRFC822Date(new Date());
 
       const imageUrl = item.imageUrl || null;
+      const itemCategories = item.categories || [];
 
       rssXml += `<item>
-<title>
-<![CDATA[${title}]]>
-</title>
+<title><![CDATA[${title}]]></title>
 <link>${escapeXml(link)}</link>
 <guid isPermaLink="${isGuidUrl ? "true" : "false"}">${escapeXml(guid)}</guid>
-<atom:link href="${escapeXml(link)}"/>
-<description>
-<![CDATA[${description}]]>
-</description>
+<description><![CDATA[${description}]]></description>
 <pubDate>${pubDate}</pubDate>
 `;
+
+      for (const cat of itemCategories) {
+        const catInfo = CATEGORY_LABELS[cat];
+        if (catInfo) {
+          rssXml += `<category>${escapeXml(catInfo.title)}</category>
+`;
+        }
+      }
 
       if (imageUrl) {
         rssXml += `<media:content url="${escapeXml(imageUrl)}" type="image/jpeg" width="1000" height="1000"/>
@@ -761,7 +973,7 @@ exports.getNewsJSON = async (req, res) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const query = {};
-    if (category) query.category = category;
+    if (category) query.categories = category;
     if (language) query.language = language;
     if (source) query.sourceName = source;
     if (search) {
@@ -784,11 +996,12 @@ exports.getNewsJSON = async (req, res) => {
     const formattedNews = news.map((item) => ({
       id: item._id.toString(),
       title: item.title,
+      originalTitle: item.originalTitle,
       description: item.rewrittenDescription || item.originalDescription,
       image: item.imageUrl,
       source: item.sourceName,
       publishedAt: item.publishedAt,
-      category: item.category,
+      categories: item.categories || [],
       language: item.language,
       originalLink: item.originalLink,
     }));

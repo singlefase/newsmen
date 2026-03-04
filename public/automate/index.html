@@ -241,12 +241,14 @@
     const progressBar = document.getElementById("progress-bar");
     const progressFill = document.getElementById("progress-fill");
 
+    const categoryButtons = {};
+
     let selectedCategory = null;
     let isRunning = false;
     let isAutoGenerating = false;
     let stopAutoGenerating = false;
     const AUTOMATION_LIMIT = 6;
-    const AUTOMATION_PAUSE_MS = 20 * 60 * 1000;
+    const AUTOMATION_PAUSE_MS = 60 * 60 * 1000;
 
     function log(message, data) {
       const time = new Date().toLocaleTimeString();
@@ -265,6 +267,13 @@
     function hideProgress() {
       progressBar.style.display = "none";
       progressFill.style.width = "0%";
+    }
+
+    function setActiveCategory(key) {
+      document.querySelectorAll(".cat-btn").forEach(b => b.classList.remove("active"));
+      if (!key) return;
+      const btn = categoryButtons[key];
+      if (btn) btn.classList.add("active");
     }
 
     function setRunning(running) {
@@ -306,16 +315,25 @@
     }
 
     async function waitWithStop(ms) {
+      const totalMin = Math.round(ms / 60000);
       let remaining = ms;
+      let lastLoggedMin = totalMin;
+      const stepMs = 10000;
       while (remaining > 0 && !stopAutoGenerating) {
-        const step = Math.min(1000, remaining);
+        const step = Math.min(stepMs, remaining);
         await new Promise((r) => setTimeout(r, step));
         remaining -= step;
+        const remainingMin = Math.ceil(remaining / 60000);
+        if (remainingMin < lastLoggedMin && remainingMin > 0) {
+          lastLoggedMin = remainingMin;
+          log(`Waiting... ${lastLoggedMin} minute(s) until next cycle.`);
+        }
       }
     }
 
     function renderCategories() {
       grid.innerHTML = "";
+      Object.keys(categoryButtons).forEach(k => delete categoryButtons[k]);
       CATEGORIES.forEach((cat) => {
         const item = document.createElement("div");
         item.className = "cat-item";
@@ -323,12 +341,12 @@
         const btn = document.createElement("button");
         btn.className = "cat-btn";
         btn.textContent = cat.label;
+        categoryButtons[cat.key] = btn;
         btn.onclick = () => {
           if (isRunning) return;
           selectedCategory = cat.key;
           selectedCategorySpan.textContent = cat.key;
-          document.querySelectorAll(".cat-btn").forEach(b => b.classList.remove("active"));
-          btn.classList.add("active");
+          setActiveCategory(cat.key);
           runBtn.disabled = false;
           rssLinksDiv.style.display = "none";
         };
@@ -462,6 +480,7 @@
       for (let i = 0; i < total; i++) {
         const cat = CATEGORIES[i];
         setProgress(Math.round(((i) / total) * 100));
+        setActiveCategory(cat.key);
         selectedCategorySpan.textContent = `${cat.key} (${i + 1}/${total})`;
 
         try {
@@ -512,6 +531,7 @@
             if (stopAutoGenerating) break;
             const cat = CATEGORIES[i];
             setProgress(Math.round(((i) / CATEGORIES.length) * 100));
+            setActiveCategory(cat.key);
             selectedCategorySpan.textContent = `${cat.key} (${i + 1}/${CATEGORIES.length})`;
             await runPipelineForCategory(cat.key, AUTOMATION_LIMIT);
           }
@@ -521,17 +541,22 @@
           setProgress(100);
           selectedCategorySpan.textContent = "waiting";
           log("========== AUTO CYCLE COMPLETE ==========");
-          log("Waiting 20 minutes before next cycle...");
+          log("Waiting 60 minutes before next cycle...");
           await waitWithStop(AUTOMATION_PAUSE_MS);
+
+          if (stopAutoGenerating) break;
+          log("Pause complete. Starting next cycle...");
         }
       } catch (error) {
         log(`Automation error: ${error.message}`);
+        if (error && error.stack) log(error.stack);
       } finally {
         isAutoGenerating = false;
         stopAutoGenerating = false;
         startGeneratingBtn.disabled = false;
         startGeneratingBtn.textContent = "Start Generating";
         selectedCategorySpan.textContent = "none";
+        setActiveCategory(null);
         setRunning(false);
         setTimeout(hideProgress, 1000);
         log("========== AUTO GENERATION STOPPED ==========");

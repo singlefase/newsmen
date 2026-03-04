@@ -56,14 +56,22 @@ const BLOCKED_KEYWORDS = [
   "गुन्हा",
 ];
 
+// NOTE: Temporarily using only Saam TV and Divya Marathi.
+// TV9 Marathi is commented out for now due to source issues / rate limiting.
+// To re-enable in future, add it back to this array.
 const RSS_SOURCES = [
-  { name: "TV9 Marathi", url: "https://www.tv9marathi.com/feed" },
-  { name: "Saam TV", url: "https://www.saamtv.com/feed/" },
+  // { name: "TV9 Marathi", url: "https://www.tv9marathi.com/feed" },
+  // { name: "Saam TV", url: "https://www.saamtv.com/feed/" },
   {
     name: "Divya Marathi",
     url: "https://divyamarathi.bhaskar.com/rss-v1--category-12019.xml",
   },
 ];
+
+// true => always use Unsplash/Pexels images only
+// false => keep normal flow (RSS image first, stock fallback)
+const STOCK_IMAGES_ONLY =
+  String(process.env.STOCK_IMAGES_ONLY || "false").toLowerCase() === "true";
 
 const CATEGORY_KEYWORDS = {
   desh: ["देश", "भारत", "राष्ट्रीय", "केंद्र", "दिल्ली", "संसद", "राष्ट्रपती", "प्रधानमंत्री", "सर्वोच्च न्यायालय", "सीबीआय", "एनआयए"],
@@ -630,7 +638,9 @@ exports.fetchExternalRSS = async (req, res) => {
           let imageDownloaded = false;
           let imageUploaded = false;
 
-          if (originalImageUrl) {
+          if (STOCK_IMAGES_ONLY) {
+            console.log("  🖼️  STOCK_IMAGES_ONLY=true, skipping source image");
+          } else if (originalImageUrl) {
             console.log(`  📸 Processing image for: ${title.substring(0, 50)}...`);
             const imageResult = await downloadAndUploadImage(
               originalImageUrl,
@@ -648,7 +658,7 @@ exports.fetchExternalRSS = async (req, res) => {
 
           // Fallback: if no image from RSS, fetch from Unsplash/Pexels
           let stockImageSource = null;
-          if (!r2ImageUrl) {
+          if (STOCK_IMAGES_ONLY || !r2ImageUrl) {
             console.log(`  🖼️  No RSS image — searching stock photos for "${detectedCategories[0]}"...`);
             const stockResult = await getStockImage(detectedCategories);
             if (stockResult) {
@@ -960,6 +970,8 @@ exports.generateRSSFeed = async (req, res) => {
 
       if (imageUrl) {
         rssXml += `<media:content url="${escapeXml(imageUrl)}" type="image/jpeg" width="1000" height="1000"/>
+<media:thumbnail url="${escapeXml(imageUrl)}" width="1000" height="1000"/>
+<enclosure url="${escapeXml(imageUrl)}" type="image/jpeg"/>
 `;
       }
 
@@ -1190,6 +1202,8 @@ exports.getRealRSS = async (req, res) => {
 
       if (imageUrl) {
         rssXml += `<media:content url="${escapeXml(imageUrl)}" type="image/jpeg" width="1000" height="1000"/>
+<media:thumbnail url="${escapeXml(imageUrl)}" width="1000" height="1000"/>
+<enclosure url="${escapeXml(imageUrl)}" type="image/jpeg"/>
 `;
       }
 

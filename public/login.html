@@ -118,7 +118,7 @@
         msg.textContent = "Login successful. Redirecting...";
         msg.classList.add("ok");
         setTimeout(() => {
-          window.location.href = "/flow-check";
+          window.location.href = "/automate";
         }, 400);
       } catch (err) {
         msg.textContent = err.message || "Login request failed";

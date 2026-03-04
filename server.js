@@ -148,7 +148,7 @@ app.get("/login", (req, res) => {
   const cookies = parseCookies(req);
   const session = verifySessionToken(cookies[AUTH_COOKIE_NAME]);
   if (session) {
-    return res.redirect("/flow-check");
+    return res.redirect("/automate");
   }
   res.sendFile(path.join(__dirname, "public", "login.html"));
 });
@@ -196,9 +196,6 @@ app.get("/api/auth/me", (req, res) => {
   });
 });
 
-// Protect whole website + APIs below
-app.use(requireAuth);
-
 // Serve static files (frontend) without auto-serving /index.html at root
 app.use(express.static("public", { index: false }));
 
@@ -210,17 +207,17 @@ app.get("/", (req, res) => {
   });
 });
 
-// Flow check page (previous root UI)
-app.get("/flow-check", (req, res) => {
+// Flow check page (previous root UI) - protected
+app.get("/flow-check", requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-// Keep automate page accessible with and without trailing slash
-app.get("/automate", (req, res) => {
+// Keep automate page accessible with and without trailing slash - protected
+app.get("/automate", requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "automate", "index.html"));
 });
 
-app.get("/automate/", (req, res) => {
+app.get("/automate/", requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "automate", "index.html"));
 });
 
@@ -252,6 +249,7 @@ app.get("/api", (req, res) => {
     version: "1.0.0",
     auth: {
       enabled: true,
+      protectedPages: ["/flow-check", "/automate"],
       loginPage: "/login",
       loginApi: "POST /api/auth/login",
     },
